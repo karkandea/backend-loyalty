@@ -140,6 +140,38 @@ SELECT
   COUNT(*) FILTER (WHERE NOT "isActive")
 FROM "AdminUser";
 
+\echo '\n[12b] Password bridge mapping coverage (target copy only)'
+DO $$
+DECLARE
+  missing_business bigint;
+  missing_admin bigint;
+BEGIN
+  IF to_regclass('public."LegacyAuthUserPassword"') IS NULL THEN
+    RAISE NOTICE 'LegacyAuthUserPassword is not present; bridge coverage check skipped.';
+    RETURN;
+  END IF;
+
+  EXECUTE $sql$
+    SELECT COUNT(*)
+    FROM "BusinessUser" b
+    LEFT JOIN "LegacyAuthUserPassword" l
+      ON l."authUserId" = COALESCE(NULLIF(b."authUserId", ''), b.id)
+    WHERE b."passwordHash" = 'managed-by-supabase-auth'
+      AND l."authUserId" IS NULL
+  $sql$ INTO missing_business;
+
+  EXECUTE $sql$
+    SELECT COUNT(*)
+    FROM "AdminUser" a
+    LEFT JOIN "LegacyAuthUserPassword" l ON l."authUserId" = a.id
+    WHERE a."passwordHash" = 'managed-by-supabase-auth'
+      AND l."authUserId" IS NULL
+  $sql$ INTO missing_admin;
+
+  RAISE NOTICE 'placeholder BusinessUser rows without bridge hash: %', missing_business;
+  RAISE NOTICE 'placeholder AdminUser rows without bridge hash (id mapping): %', missing_admin;
+END $$;
+
 \echo '\n[13] Case-insensitive duplicate emails within the same business'
 SELECT 'BusinessUser' AS source, "businessId", lower(trim(email)) AS normalized_email, COUNT(*) AS rows
 FROM "BusinessUser"
