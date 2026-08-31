@@ -1,12 +1,21 @@
-SELECT to_regclass('auth.users') IS NOT NULL AS legacy_auth_users_present;
+SELECT
+  to_regclass('public."LegacyAuthUserPassword"') IS NOT NULL AS legacy_password_bridge_present,
+  to_regclass('auth.users') IS NOT NULL AS transitional_supabase_auth_present;
 
 DO $$
 DECLARE
-  legacy_hash_count bigint;
+  legacy_hash_count bigint := 0;
 BEGIN
-  IF to_regclass('auth.users') IS NULL THEN
-    RAISE NOTICE 'auth.users is not present; accounts with placeholder hashes will need password reset/migration.';
-  ELSE
+  IF to_regclass('public."LegacyAuthUserPassword"') IS NOT NULL THEN
+    EXECUTE $sql$
+      SELECT COUNT(*)
+      FROM "LegacyAuthUserPassword"
+      WHERE "passwordHash" IS NOT NULL
+        AND "passwordHash" <> ''
+    $sql$ INTO legacy_hash_count;
+
+    RAISE NOTICE 'app-owned legacy password hashes available: %', legacy_hash_count;
+  ELSIF to_regclass('auth.users') IS NOT NULL THEN
     EXECUTE $sql$
       SELECT COUNT(*)
       FROM auth.users
@@ -14,7 +23,9 @@ BEGIN
         AND encrypted_password <> ''
     $sql$ INTO legacy_hash_count;
 
-    RAISE NOTICE 'legacy password hashes available: %', legacy_hash_count;
+    RAISE NOTICE 'transitional auth.users password hashes available: %', legacy_hash_count;
+  ELSE
+    RAISE NOTICE 'No legacy password source is present; placeholder accounts will require password reset/import.';
   END IF;
 END $$;
 
