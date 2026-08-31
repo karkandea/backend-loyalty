@@ -1,3 +1,4 @@
+using System.Text;
 using BackendLoyalty.Api.Contracts;
 using BackendLoyalty.Application.Auditing;
 using BackendLoyalty.Application.Loyalty;
@@ -24,6 +25,7 @@ if (string.IsNullOrWhiteSpace(supabaseUrl))
     throw new InvalidOperationException("Supabase:Url is required.");
 }
 
+var supabaseJwtSecret = builder.Configuration["Supabase:JwtSecret"];
 var issuer = $"{supabaseUrl}/auth/v1";
 
 builder.Services.AddControllers();
@@ -40,21 +42,43 @@ builder.Services
     .AddJwtBearer(options =>
     {
         options.MapInboundClaims = false;
-        options.Authority = issuer;
-        options.MetadataAddress = $"{issuer}/.well-known/openid-configuration";
-        options.Audience = "authenticated";
-        options.RequireHttpsMetadata = true;
-        options.TokenValidationParameters = new TokenValidationParameters
+
+        if (string.IsNullOrWhiteSpace(supabaseJwtSecret))
         {
-            ValidateIssuer = true,
-            ValidIssuer = issuer,
-            ValidateAudience = true,
-            ValidAudience = "authenticated",
-            ValidateLifetime = true,
-            ClockSkew = TimeSpan.FromMinutes(1),
-            NameClaimType = "sub",
-            RoleClaimType = "role"
-        };
+            // Preferred mode: asymmetric Supabase signing keys discovered through OIDC/JWKS.
+            options.Authority = issuer;
+            options.MetadataAddress = $"{issuer}/.well-known/openid-configuration";
+            options.RequireHttpsMetadata = true;
+            options.TokenValidationParameters = new TokenValidationParameters
+            {
+                ValidateIssuer = true,
+                ValidIssuer = issuer,
+                ValidateAudience = true,
+                ValidAudience = "authenticated",
+                ValidateLifetime = true,
+                ClockSkew = TimeSpan.FromMinutes(1),
+                NameClaimType = "sub",
+                RoleClaimType = "role"
+            };
+        }
+        else
+        {
+            // Compatibility mode for legacy Supabase projects still signing access tokens with HS256.
+            options.TokenValidationParameters = new TokenValidationParameters
+            {
+                ValidateIssuerSigningKey = true,
+                IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(supabaseJwtSecret)),
+                ValidAlgorithms = [SecurityAlgorithms.HmacSha256],
+                ValidateIssuer = true,
+                ValidIssuer = issuer,
+                ValidateAudience = true,
+                ValidAudience = "authenticated",
+                ValidateLifetime = true,
+                ClockSkew = TimeSpan.FromMinutes(1),
+                NameClaimType = "sub",
+                RoleClaimType = "role"
+            };
+        }
     });
 
 builder.Services.AddAuthorization();
