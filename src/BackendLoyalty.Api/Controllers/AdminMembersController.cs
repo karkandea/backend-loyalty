@@ -1,5 +1,7 @@
+using System.Text.Json;
 using BackendLoyalty.Api.Auth;
 using BackendLoyalty.Api.Contracts;
+using BackendLoyalty.Application.Auditing;
 using BackendLoyalty.Application.Loyalty;
 using BackendLoyalty.Application.Members;
 using Microsoft.AspNetCore.Authorization;
@@ -11,7 +13,8 @@ namespace BackendLoyalty.Api.Controllers;
 [Route("api/admin/members")]
 public sealed class AdminMembersController(
     IMemberScanService memberScanService,
-    ILoyaltyStampService loyaltyStampService) : ControllerBase
+    ILoyaltyStampService loyaltyStampService,
+    IAuditLogWriter auditLogWriter) : ControllerBase
 {
     [Authorize]
     [HttpPost("scan")]
@@ -119,6 +122,29 @@ public sealed class AdminMembersController(
                     request.TransactionNotes?.Trim()),
                 cancellationToken);
 
+            await auditLogWriter.WriteAsync(
+                new AuditEvent(
+                    businessId,
+                    userId,
+                    role,
+                    outletId,
+                    "pos_add_stamp",
+                    "member_card",
+                    memberCardId,
+                    "Tambah stamp",
+                    JsonSerializer.Serialize(new
+                    {
+                        memberId,
+                        memberCardId,
+                        stampCount = request.StampCount,
+                        outletId,
+                        transactionIds = result.Transactions,
+                        didAdvanceCard = result.DidAdvanceCard,
+                    }),
+                    GetClientIp(),
+                    Request.Headers["User-Agent"].ToString()),
+                cancellationToken);
+
             return Ok(ApiResponse<AddStampResult>.Ok(result));
         }
         catch (LoyaltyOperationException exception) when (exception.Code == LoyaltyOperationErrorCode.NotFound)
@@ -134,5 +160,21 @@ public sealed class AdminMembersController(
             return StatusCode(StatusCodes.Status500InternalServerError,
                 ApiResponse<AddStampResult>.Fail("INTERNAL_ERROR", "Failed to update stamp count"));
         }
+    }
+
+    private string? GetClientIp()
+    {
+        var forwarded = Request.Headers["X-Forwarded-For"].ToString();
+        var firstForwarded = forwarded
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .FirstOrDefault();
+
+        if (!string.IsNullOrWhiteSpace(firstForwarded))
+        {
+            return firstForwarded;
+        }
+
+        var realIp = Request.Headers["X-Real-IP"].ToString();
+        return string.IsNullOrWhiteSpace(realIp) ? null : realIp;
     }
 }
