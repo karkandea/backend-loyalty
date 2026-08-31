@@ -1,5 +1,7 @@
 using BackendLoyalty.Api.Contracts;
+using BackendLoyalty.Application.Loyalty;
 using BackendLoyalty.Application.Members;
+using BackendLoyalty.Infrastructure.Loyalty;
 using BackendLoyalty.Infrastructure.Members;
 using BackendLoyalty.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -28,6 +30,7 @@ builder.Services.AddOpenApi();
 builder.Services.AddDbContext<LoyaltyDbContext>(options =>
     options.UseNpgsql(connectionString));
 builder.Services.AddScoped<IMemberScanService, MemberScanService>();
+builder.Services.AddScoped<ILoyaltyStampService, LoyaltyStampService>();
 
 builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
