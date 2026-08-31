@@ -65,6 +65,12 @@ If the application password hash is still a placeholder and `auth.users` was not
 
 The auth schema is only a temporary password-migration source. No Supabase service/API call is made by the new backend.
 
+Migration readiness can be inspected with:
+
+```bash
+psql "$DATABASE_URL" -f scripts/check-auth-migration.sql
+```
+
 ### Members
 
 Member authentication remains the existing opaque `member_session` design. The raw cookie token is SHA-256 hashed and validated directly against `MemberSession`, including expiry/revocation and member/business ownership.
