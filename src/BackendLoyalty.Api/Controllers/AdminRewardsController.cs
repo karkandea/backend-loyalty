@@ -30,7 +30,7 @@ public sealed class AdminRewardsController(
                 new { rewardToken = "rewardToken is required and must be at most 255 characters" }));
         }
 
-        var role = SupabaseClaims.AppRole(User)?.ToLowerInvariant();
+        var role = LoyaltyClaims.Role(User)?.ToLowerInvariant();
         if (role is not ("staff" or "manager"))
         {
             return StatusCode(StatusCodes.Status403Forbidden,
@@ -39,9 +39,9 @@ public sealed class AdminRewardsController(
                     "Role is not allowed for this operation"));
         }
 
-        var userId = SupabaseClaims.UserId(User);
-        var businessId = SupabaseClaims.BusinessId(User);
-        var outletId = SupabaseClaims.OutletId(User);
+        var userId = LoyaltyClaims.UserId(User);
+        var businessId = LoyaltyClaims.BusinessId(User);
+        var outletId = LoyaltyClaims.OutletId(User);
 
         if (string.IsNullOrWhiteSpace(userId))
         {
