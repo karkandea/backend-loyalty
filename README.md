@@ -12,7 +12,7 @@ Current migrated backend scope:
 - PostgreSQL via EF Core + Npgsql
 - Supabase remains the staff/business authentication source for now
 - existing `member_session` opaque cookie validation is handled directly by .NET for migrated member routes
-- Existing database schema is mapped directly; no automatic EF migrations run on startup
+- existing database schema is mapped directly; no automatic EF migrations run on startup
 - `POST /api/admin/members/scan`
 - `POST /api/admin/members/{memberId}/cards/{memberCardId}/add-stamp`
 - `POST /api/admin/rewards/scan`
@@ -86,6 +86,8 @@ Optional frontend origins can be configured with:
 Cors__AllowedOrigins__0=http://localhost:5173
 ```
 
+The API uses credentialed CORS so the member session cookie can be sent when the React frontend and API are served from separate trusted origins. Origins must be explicit; wildcard origins must not be used with credentials.
+
 ## Local build
 
 ```bash
@@ -105,6 +107,36 @@ dotnet run --project src/BackendLoyalty.Api
 docker build -t backend-loyalty .
 docker run --rm -p 8080:8080 --env-file .env backend-loyalty
 ```
+
+## VPS build + smoke verification
+
+The VPS does not need a locally installed .NET SDK; the Dockerfile builds with the .NET 10 SDK image.
+
+From the repository root on the VPS:
+
+```bash
+git checkout feat/bootstrap-dotnet-api
+git pull
+cp .env.example .env.vps
+```
+
+Fill `.env.vps` with the real existing Loyalty PostgreSQL connection and Supabase URL. If PostgreSQL later runs directly on the same VPS host while the API runs in Docker, use `Host=host.docker.internal`; the validation script adds the Linux host-gateway mapping automatically.
+
+Then run:
+
+```bash
+bash scripts/vps-verify.sh
+```
+
+The script:
+
+1. builds the .NET 10 Docker image,
+2. starts an isolated validation container on `127.0.0.1:5092`,
+3. verifies `GET /health`,
+4. verifies `GET /health/db`, and
+5. prints a Docker memory/CPU snapshot.
+
+It does not expose the validation API publicly and does not run any EF migration.
 
 ## Parity notes to validate before cutover
 
