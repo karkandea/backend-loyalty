@@ -1,0 +1,36 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BackendLoyalty.Api", "src\BackendLoyalty.Api\BackendLoyalty.Api.csproj", "{174C0370-A802-4DA0-AE72-0CB349A5B0A1}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BackendLoyalty.Application", "src\BackendLoyalty.Application\BackendLoyalty.Application.csproj", "{78E63826-7A49-4E03-B7C4-05A2024583C8}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BackendLoyalty.Domain", "src\BackendLoyalty.Domain\BackendLoyalty.Domain.csproj", "{DBAC9057-84B7-45A2-AB72-BBA2A870873F}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BackendLoyalty.Infrastructure", "src\BackendLoyalty.Infrastructure\BackendLoyalty.Infrastructure.csproj", "{1B234A4D-452E-4EB3-8242-8436A0AEB16E}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{174C0370-A802-4DA0-AE72-0CB349A5B0A1}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{174C0370-A802-4DA0-AE72-0CB349A5B0A1}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{174C0370-A802-4DA0-AE72-0CB349A5B0A1}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{174C0370-A802-4DA0-AE72-0CB349A5B0A1}.Release|Any CPU.Build.0 = Release|Any CPU
+		{78E63826-7A49-4E03-B7C4-05A2024583C8}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{78E63826-7A49-4E03-B7C4-05A2024583C8}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{78E63826-7A49-4E03-B7C4-05A2024583C8}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{78E63826-7A49-4E03-B7C4-05A2024583C8}.Release|Any CPU.Build.0 = Release|Any CPU
+		{DBAC9057-84B7-45A2-AB72-BBA2A870873F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{DBAC9057-84B7-45A2-AB72-BBA2A870873F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{DBAC9057-84B7-45A2-AB72-BBA2A870873F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{DBAC9057-84B7-45A2-AB72-BBA2A870873F}.Release|Any CPU.Build.0 = Release|Any CPU
+		{1B234A4D-452E-4EB3-8242-8436A0AEB16E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{1B234A4D-452E-4EB3-8242-8436A0AEB16E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{1B234A4D-452E-4EB3-8242-8436A0AEB16E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{1B234A4D-452E-4EB3-8242-8436A0AEB16E}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal
