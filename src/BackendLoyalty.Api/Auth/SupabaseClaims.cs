@@ -5,8 +5,10 @@ namespace BackendLoyalty.Api.Auth;
 
 internal static class SupabaseClaims
 {
+    public static string? UserId(ClaimsPrincipal user) => user.FindFirst("sub")?.Value;
     public static string? AppRole(ClaimsPrincipal user) => AppMetadata(user, "role") ?? user.FindFirst("app_role")?.Value;
     public static string? BusinessId(ClaimsPrincipal user) => AppMetadata(user, "business_id") ?? user.FindFirst("business_id")?.Value;
+    public static string? OutletId(ClaimsPrincipal user) => AppMetadata(user, "outlet_id") ?? user.FindFirst("outlet_id")?.Value;
 
     private static string? AppMetadata(ClaimsPrincipal user, string key)
     {
