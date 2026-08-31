@@ -17,3 +17,9 @@ public sealed record RewardRedemptionResult(
     string Status,
     DateTime RedeemedAt,
     string? TransactionId);
+
+public sealed record RewardRedemptionExecutionResult(
+    RewardRedemptionResult Response,
+    string MemberId,
+    string MemberCardId,
+    string RewardId);
