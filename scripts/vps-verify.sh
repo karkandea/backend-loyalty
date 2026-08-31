@@ -73,7 +73,6 @@ echo "==> Runtime snapshot"
 docker stats --no-stream "$CONTAINER_NAME"
 
 echo
-echo=""
 echo "PASS: backend built, started, and connected to the configured database."
 echo "Validation container remains running as: $CONTAINER_NAME"
 echo "Stop it with: docker rm -f $CONTAINER_NAME"
