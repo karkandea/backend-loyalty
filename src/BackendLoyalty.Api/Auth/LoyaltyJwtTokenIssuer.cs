@@ -5,26 +5,26 @@ using Microsoft.IdentityModel.Tokens;
 
 namespace BackendLoyalty.Api.Auth;
 
-internal sealed record LoyaltyTokenContext(
+public sealed record LoyaltyTokenContext(
     string UserId,
     string AuthKind,
     string? Role,
     string? BusinessId,
     string? OutletId);
 
-internal sealed record LoyaltyTokenPair(
+public sealed record LoyaltyTokenPair(
     string AccessToken,
     string RefreshToken,
     DateTime AccessExpiresAt,
     DateTime RefreshExpiresAt);
 
-internal interface ILoyaltyJwtTokenIssuer
+public interface ILoyaltyJwtTokenIssuer
 {
     LoyaltyTokenPair Issue(LoyaltyTokenContext context);
     ClaimsPrincipal? ValidateRefreshToken(string refreshToken);
 }
 
-internal sealed class LoyaltyJwtTokenIssuer(IConfiguration configuration) : ILoyaltyJwtTokenIssuer
+public sealed class LoyaltyJwtTokenIssuer(IConfiguration configuration) : ILoyaltyJwtTokenIssuer
 {
     private readonly string _issuer = Required(configuration, "Jwt:Issuer");
     private readonly string _audience = Required(configuration, "Jwt:Audience");
