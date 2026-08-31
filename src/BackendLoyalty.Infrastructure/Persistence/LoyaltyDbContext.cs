@@ -11,6 +11,7 @@ public sealed class LoyaltyDbContext(DbContextOptions<LoyaltyDbContext> options)
     public DbSet<CardMilestone> CardMilestones => Set<CardMilestone>();
     public DbSet<Reward> Rewards => Set<Reward>();
     public DbSet<MemberReward> MemberRewards => Set<MemberReward>();
+    public DbSet<RewardToken> RewardTokens => Set<RewardToken>();
     public DbSet<LoyaltyTransaction> Transactions => Set<LoyaltyTransaction>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
 
@@ -131,6 +132,36 @@ public sealed class LoyaltyDbContext(DbContextOptions<LoyaltyDbContext> options)
             entity.HasIndex(x => x.RewardId);
             entity.HasIndex(x => x.MemberCardId);
             entity.HasIndex(x => x.Status);
+        });
+
+        modelBuilder.Entity<RewardToken>(entity =>
+        {
+            entity.ToTable("RewardToken");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Id).HasColumnName("id");
+            entity.Property(x => x.BusinessId).HasColumnName("businessId");
+            entity.Property(x => x.MemberRewardId).HasColumnName("memberRewardId");
+            entity.Property(x => x.MemberId).HasColumnName("memberId");
+            entity.Property(x => x.MemberCardId).HasColumnName("memberCardId");
+            entity.Property(x => x.Scope).HasColumnName("scope");
+            entity.Property(x => x.Token).HasColumnName("token");
+            entity.Property(x => x.Status).HasColumnName("status");
+            entity.Property(x => x.ExpiresAt).HasColumnName("expiresAt");
+            entity.Property(x => x.UsedAt).HasColumnName("usedAt");
+            entity.Property(x => x.UsedByStaffId).HasColumnName("usedByStaffId");
+            entity.Property(x => x.OutletId).HasColumnName("outletId");
+            entity.Property(x => x.UsedAtOutletId).HasColumnName("usedAtOutletId");
+            entity.Property(x => x.CreatedAt).HasColumnName("createdAt");
+            entity.Property(x => x.UpdatedAt).HasColumnName("updatedAt");
+            entity.HasIndex(x => x.BusinessId);
+            entity.HasIndex(x => x.MemberRewardId);
+            entity.HasIndex(x => x.MemberId);
+            entity.HasIndex(x => x.MemberCardId);
+            entity.HasIndex(x => x.Scope);
+            entity.HasIndex(x => x.UsedByStaffId);
+            entity.HasIndex(x => x.OutletId);
+            entity.HasIndex(x => x.UsedAtOutletId);
+            entity.HasIndex(x => x.Token).IsUnique();
         });
 
         modelBuilder.Entity<LoyaltyTransaction>(entity =>
