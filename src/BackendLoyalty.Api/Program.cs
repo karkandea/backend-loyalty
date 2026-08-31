@@ -1,10 +1,13 @@
 using System.Text;
+using BackendLoyalty.Api.Auth;
 using BackendLoyalty.Api.Contracts;
 using BackendLoyalty.Application.Auditing;
+using BackendLoyalty.Application.Auth;
 using BackendLoyalty.Application.Loyalty;
 using BackendLoyalty.Application.Members;
 using BackendLoyalty.Application.Rewards;
 using BackendLoyalty.Infrastructure.Auditing;
+using BackendLoyalty.Infrastructure.Auth;
 using BackendLoyalty.Infrastructure.Loyalty;
 using BackendLoyalty.Infrastructure.Members;
 using BackendLoyalty.Infrastructure.Persistence;
@@ -22,14 +25,16 @@ if (string.IsNullOrWhiteSpace(connectionString))
     throw new InvalidOperationException("ConnectionStrings:LoyaltyDb is required.");
 }
 
-var supabaseUrl = builder.Configuration["Supabase:Url"]?.TrimEnd('/');
-if (string.IsNullOrWhiteSpace(supabaseUrl))
-{
-    throw new InvalidOperationException("Supabase:Url is required.");
-}
+var jwtIssuer = builder.Configuration["Jwt:Issuer"]?.Trim();
+var jwtAudience = builder.Configuration["Jwt:Audience"]?.Trim();
+var jwtSigningKey = builder.Configuration["Jwt:SigningKey"];
 
-var supabaseJwtSecret = builder.Configuration["Supabase:JwtSecret"];
-var issuer = $"{supabaseUrl}/auth/v1";
+if (string.IsNullOrWhiteSpace(jwtIssuer))
+    throw new InvalidOperationException("Jwt:Issuer is required.");
+if (string.IsNullOrWhiteSpace(jwtAudience))
+    throw new InvalidOperationException("Jwt:Audience is required.");
+if (string.IsNullOrWhiteSpace(jwtSigningKey) || Encoding.UTF8.GetByteCount(jwtSigningKey) < 32)
+    throw new InvalidOperationException("Jwt:SigningKey is required and must be at least 32 bytes.");
 
 builder.Services
     .AddControllers()
@@ -55,55 +60,48 @@ builder.Services.AddOpenApi();
 
 builder.Services.AddDbContext<LoyaltyDbContext>(options =>
     options.UseNpgsql(connectionString));
+builder.Services.AddDbContext<StandaloneAuthDbContext>(options =>
+    options.UseNpgsql(connectionString));
+
 builder.Services.AddScoped<IMemberScanService, MemberScanService>();
 builder.Services.AddScoped<IMemberSessionResolver, MemberSessionResolver>();
 builder.Services.AddScoped<ILoyaltyStampService, LoyaltyStampService>();
 builder.Services.AddScoped<IRewardRedemptionService, RewardRedemptionService>();
 builder.Services.AddScoped<IMemberRewardTokenService, MemberRewardTokenService>();
 builder.Services.AddScoped<IAuditLogWriter, AuditLogWriter>();
+builder.Services.AddScoped<IStandaloneCredentialService, StandaloneCredentialService>();
+builder.Services.AddSingleton<ILoyaltyJwtTokenIssuer, LoyaltyJwtTokenIssuer>();
 
 builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
         options.MapInboundClaims = false;
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuerSigningKey = true,
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSigningKey)),
+            ValidAlgorithms = [SecurityAlgorithms.HmacSha256],
+            ValidateIssuer = true,
+            ValidIssuer = jwtIssuer,
+            ValidateAudience = true,
+            ValidAudience = jwtAudience,
+            ValidateLifetime = true,
+            ClockSkew = TimeSpan.FromSeconds(30),
+            NameClaimType = "sub",
+            RoleClaimType = "role",
+        };
+        options.Events = new JwtBearerEvents
+        {
+            OnTokenValidated = context =>
+            {
+                var tokenType = context.Principal?.FindFirst(LoyaltyClaims.TokenTypeClaim)?.Value;
+                if (!string.Equals(tokenType, "access", StringComparison.Ordinal))
+                    context.Fail("Only access tokens may call protected APIs.");
 
-        if (string.IsNullOrWhiteSpace(supabaseJwtSecret))
-        {
-            // Preferred mode: asymmetric Supabase signing keys discovered through OIDC/JWKS.
-            options.Authority = issuer;
-            options.MetadataAddress = $"{issuer}/.well-known/openid-configuration";
-            options.RequireHttpsMetadata = true;
-            options.TokenValidationParameters = new TokenValidationParameters
-            {
-                ValidateIssuer = true,
-                ValidIssuer = issuer,
-                ValidateAudience = true,
-                ValidAudience = "authenticated",
-                ValidateLifetime = true,
-                ClockSkew = TimeSpan.FromMinutes(1),
-                NameClaimType = "sub",
-                RoleClaimType = "role"
-            };
-        }
-        else
-        {
-            // Compatibility mode for legacy Supabase projects still signing access tokens with HS256.
-            options.TokenValidationParameters = new TokenValidationParameters
-            {
-                ValidateIssuerSigningKey = true,
-                IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(supabaseJwtSecret)),
-                ValidAlgorithms = [SecurityAlgorithms.HmacSha256],
-                ValidateIssuer = true,
-                ValidIssuer = issuer,
-                ValidateAudience = true,
-                ValidAudience = "authenticated",
-                ValidateLifetime = true,
-                ClockSkew = TimeSpan.FromMinutes(1),
-                NameClaimType = "sub",
-                RoleClaimType = "role"
-            };
-        }
+                return Task.CompletedTask;
+            },
+        };
     });
 
 builder.Services.AddAuthorization();
