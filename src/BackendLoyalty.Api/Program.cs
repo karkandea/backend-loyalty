@@ -8,10 +8,18 @@ using Microsoft.IdentityModel.Tokens;
 
 var builder = WebApplication.CreateBuilder(args);
 
-var connectionString = builder.Configuration.GetConnectionString("LoyaltyDb")
-    ?? throw new InvalidOperationException("ConnectionStrings:LoyaltyDb is required.");
-var supabaseUrl = builder.Configuration["Supabase:Url"]?.TrimEnd('/')
-    ?? throw new InvalidOperationException("Supabase:Url is required.");
+var connectionString = builder.Configuration.GetConnectionString("LoyaltyDb");
+if (string.IsNullOrWhiteSpace(connectionString))
+{
+    throw new InvalidOperationException("ConnectionStrings:LoyaltyDb is required.");
+}
+
+var supabaseUrl = builder.Configuration["Supabase:Url"]?.TrimEnd('/');
+if (string.IsNullOrWhiteSpace(supabaseUrl))
+{
+    throw new InvalidOperationException("Supabase:Url is required.");
+}
+
 var issuer = $"{supabaseUrl}/auth/v1";
 
 builder.Services.AddControllers();
