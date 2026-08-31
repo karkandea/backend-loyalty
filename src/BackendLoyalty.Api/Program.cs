@@ -3,10 +3,12 @@ using BackendLoyalty.Api.Contracts;
 using BackendLoyalty.Application.Auditing;
 using BackendLoyalty.Application.Loyalty;
 using BackendLoyalty.Application.Members;
+using BackendLoyalty.Application.Rewards;
 using BackendLoyalty.Infrastructure.Auditing;
 using BackendLoyalty.Infrastructure.Loyalty;
 using BackendLoyalty.Infrastructure.Members;
 using BackendLoyalty.Infrastructure.Persistence;
+using BackendLoyalty.Infrastructure.Rewards;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -55,6 +57,7 @@ builder.Services.AddDbContext<LoyaltyDbContext>(options =>
     options.UseNpgsql(connectionString));
 builder.Services.AddScoped<IMemberScanService, MemberScanService>();
 builder.Services.AddScoped<ILoyaltyStampService, LoyaltyStampService>();
+builder.Services.AddScoped<IRewardRedemptionService, RewardRedemptionService>();
 builder.Services.AddScoped<IAuditLogWriter, AuditLogWriter>();
 
 builder.Services
