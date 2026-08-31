@@ -8,6 +8,7 @@ using BackendLoyalty.Infrastructure.Loyalty;
 using BackendLoyalty.Infrastructure.Members;
 using BackendLoyalty.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 
@@ -28,7 +29,26 @@ if (string.IsNullOrWhiteSpace(supabaseUrl))
 var supabaseJwtSecret = builder.Configuration["Supabase:JwtSecret"];
 var issuer = $"{supabaseUrl}/auth/v1";
 
-builder.Services.AddControllers();
+builder.Services
+    .AddControllers()
+    .ConfigureApiBehaviorOptions(options =>
+    {
+        options.InvalidModelStateResponseFactory = context =>
+        {
+            var details = context.ModelState
+                .Where(x => x.Value?.Errors.Count > 0)
+                .ToDictionary(
+                    x => x.Key,
+                    x => x.Value!.Errors
+                        .Select(error => string.IsNullOrWhiteSpace(error.ErrorMessage)
+                            ? "Invalid value"
+                            : error.ErrorMessage)
+                        .ToArray());
+
+            return new BadRequestObjectResult(
+                ApiResponse<object>.Fail("VALIDATION_ERROR", "Invalid payload", details));
+        };
+    });
 builder.Services.AddOpenApi();
 
 builder.Services.AddDbContext<LoyaltyDbContext>(options =>
