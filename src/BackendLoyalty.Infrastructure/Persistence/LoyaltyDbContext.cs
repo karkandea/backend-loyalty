@@ -12,6 +12,7 @@ public sealed class LoyaltyDbContext(DbContextOptions<LoyaltyDbContext> options)
     public DbSet<Reward> Rewards => Set<Reward>();
     public DbSet<MemberReward> MemberRewards => Set<MemberReward>();
     public DbSet<LoyaltyTransaction> Transactions => Set<LoyaltyTransaction>();
+    public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -156,6 +157,27 @@ public sealed class LoyaltyDbContext(DbContextOptions<LoyaltyDbContext> options)
             entity.HasIndex(x => x.StaffId);
             entity.HasIndex(x => x.Type);
             entity.HasIndex(x => x.CreatedAt);
+        });
+
+        modelBuilder.Entity<AuditLog>(entity =>
+        {
+            entity.ToTable("AuditLog");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Id).HasColumnName("id").HasColumnType("uuid");
+            entity.Property(x => x.BusinessId).HasColumnName("businessId").HasColumnType("uuid");
+            entity.Property(x => x.UserId).HasColumnName("userId").HasColumnType("uuid");
+            entity.Property(x => x.Role).HasColumnName("role");
+            entity.Property(x => x.OutletId).HasColumnName("outletId").HasColumnType("uuid");
+            entity.Property(x => x.ActionType).HasColumnName("actionType");
+            entity.Property(x => x.ResourceType).HasColumnName("resourceType");
+            entity.Property(x => x.ResourceId).HasColumnName("resourceId");
+            entity.Property(x => x.Summary).HasColumnName("summary");
+            entity.Property(x => x.MetadataJson).HasColumnName("metadata").HasColumnType("jsonb");
+            entity.Property(x => x.Ip).HasColumnName("ip");
+            entity.Property(x => x.UserAgent).HasColumnName("userAgent");
+            entity.Property(x => x.CreatedAt).HasColumnName("createdAt");
+            entity.HasIndex(x => new { x.BusinessId, x.CreatedAt });
+            entity.HasIndex(x => x.ActionType);
         });
     }
 }
