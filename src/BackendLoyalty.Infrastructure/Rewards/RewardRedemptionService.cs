@@ -8,7 +8,7 @@ namespace BackendLoyalty.Infrastructure.Rewards;
 
 public sealed class RewardRedemptionService(LoyaltyDbContext dbContext) : IRewardRedemptionService
 {
-    public async Task<RewardRedemptionResult> RedeemAsync(
+    public async Task<RewardRedemptionExecutionResult> RedeemAsync(
         RedeemRewardCommand command,
         CancellationToken cancellationToken = default)
     {
@@ -116,7 +116,6 @@ public sealed class RewardRedemptionService(LoyaltyDbContext dbContext) : IRewar
                 "Token not valid for this business");
         }
 
-        // Atomic claim: only one concurrent cashier can consume an ACTIVE, unused, unexpired token.
         var tokenRows = await dbContext.RewardTokens
             .Where(x =>
                 x.Id == token.Id &&
@@ -139,8 +138,6 @@ public sealed class RewardRedemptionService(LoyaltyDbContext dbContext) : IRewar
                 "Reward token already redeemed");
         }
 
-        // Also claim the MemberReward conditionally. If another path redeemed it first,
-        // this transaction rolls the token claim back.
         var rewardRows = await dbContext.MemberRewards
             .Where(x =>
                 x.Id == memberReward.Id &&
@@ -180,11 +177,15 @@ public sealed class RewardRedemptionService(LoyaltyDbContext dbContext) : IRewar
         await dbContext.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
 
-        return new RewardRedemptionResult(
-            token.Id,
-            memberReward.Id,
-            "REDEEMED",
-            now,
-            transactionId);
+        return new RewardRedemptionExecutionResult(
+            new RewardRedemptionResult(
+                token.Id,
+                memberReward.Id,
+                "REDEEMED",
+                now,
+                transactionId),
+            memberReward.MemberId,
+            memberCard.Id,
+            memberReward.RewardId);
     }
 }
