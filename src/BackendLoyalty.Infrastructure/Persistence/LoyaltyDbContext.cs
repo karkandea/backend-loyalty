@@ -6,6 +6,7 @@ namespace BackendLoyalty.Infrastructure.Persistence;
 public sealed class LoyaltyDbContext(DbContextOptions<LoyaltyDbContext> options) : DbContext(options)
 {
     public DbSet<Member> Members => Set<Member>();
+    public DbSet<MemberSession> MemberSessions => Set<MemberSession>();
     public DbSet<MemberCard> MemberCards => Set<MemberCard>();
     public DbSet<Card> Cards => Set<Card>();
     public DbSet<CardMilestone> CardMilestones => Set<CardMilestone>();
@@ -33,6 +34,25 @@ public sealed class LoyaltyDbContext(DbContextOptions<LoyaltyDbContext> options)
             entity.Property(x => x.UpdatedAt).HasColumnName("updatedAt");
             entity.HasIndex(x => x.BusinessId);
             entity.HasIndex(x => new { x.BusinessId, x.MemberBarcode }).IsUnique();
+        });
+
+        modelBuilder.Entity<MemberSession>(entity =>
+        {
+            entity.ToTable("MemberSession");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Id).HasColumnName("id");
+            entity.Property(x => x.BusinessId).HasColumnName("businessId");
+            entity.Property(x => x.MemberId).HasColumnName("memberId");
+            entity.Property(x => x.SessionTokenHash).HasColumnName("sessionTokenHash");
+            entity.Property(x => x.ExpiresAt).HasColumnName("expiresAt");
+            entity.Property(x => x.RevokedAt).HasColumnName("revokedAt");
+            entity.Property(x => x.Ip).HasColumnName("ip");
+            entity.Property(x => x.UserAgent).HasColumnName("userAgent");
+            entity.Property(x => x.CreatedAt).HasColumnName("createdAt");
+            entity.Property(x => x.UpdatedAt).HasColumnName("updatedAt");
+            entity.HasIndex(x => x.SessionTokenHash).IsUnique();
+            entity.HasIndex(x => new { x.BusinessId, x.MemberId });
+            entity.HasIndex(x => x.ExpiresAt);
         });
 
         modelBuilder.Entity<MemberCard>(entity =>
