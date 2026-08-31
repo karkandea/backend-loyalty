@@ -4,32 +4,28 @@ ASP.NET Core backend for the Loyalty Stamp platform.
 
 ## Migration strategy
 
-The existing Next.js application remains the reference implementation while backend routes are migrated incrementally to this service. Existing PostgreSQL data and API contracts are preserved during the migration.
+The existing Next.js application remains the reference implementation while routes are migrated incrementally. PostgreSQL stays the source of truth during parity testing and no automatic EF migration runs on startup.
 
-Current migrated backend scope:
+Current backend scope:
 
 - ASP.NET Core on .NET 10 LTS
 - PostgreSQL via EF Core + Npgsql
-- Supabase remains the staff/business authentication source for now
-- existing `member_session` opaque cookie validation is handled directly by .NET for migrated member routes
-- existing database schema is mapped directly; no automatic EF migrations run on startup
+- standalone staff/business JWT auth issued by this backend
+- direct `member_session` cookie validation for members
+- `POST /api/admin/auth/login`
+- `POST /api/business/auth/login`
+- `POST /api/business/auth/active-business`
+- `POST /api/auth/refresh`
 - `POST /api/admin/members/scan`
 - `POST /api/admin/members/{memberId}/cards/{memberCardId}/add-stamp`
 - `POST /api/admin/rewards/scan`
 - `POST /api/member/rewards/{memberRewardId}/token`
-- add-stamp overflow across card levels / cycles
-- optimistic stamp concurrency guard
-- milestone detection
-- milestone reward auto-creation and linking
-- `MemberReward` issuance
-- short-lived member reward token issuance
-- atomic cashier reward redemption
-- `Transaction` creation
-- best-effort `AuditLog` write
-- health endpoints: `GET /health` and `GET /health/db`
-- Docker build included for VPS deployment
-
-The .NET add-stamp and reward-redemption implementations use database transactions. This improves consistency compared with legacy sequences of separate REST writes while preserving the external API behavior.
+- stamp overflow / level progression / cycle
+- milestone reward creation and `MemberReward` issuance
+- atomic reward redemption
+- transaction + best-effort audit writes
+- `GET /health` and `GET /health/db`
+- Docker/VPS verification script
 
 ## Solution structure
 
@@ -41,52 +37,56 @@ src/
 └── BackendLoyalty.Infrastructure
 ```
 
-This is a modular monolith: one deployable backend service, split into projects for separation of responsibilities.
-
-## Authentication during migration
+## Authentication
 
 ### Staff / manager / business users
 
-Supabase remains the token issuer. Authorization trusts signed `app_metadata` / signed claims only; it does not use user-editable `user_metadata` for authorization.
+The .NET backend no longer requires Supabase URL, anon key, service-role key, OIDC discovery, JWKS, or Supabase JWT secrets.
 
-The preferred mode is asymmetric Supabase signing keys. Leave this unset and ASP.NET Core validates through Supabase OIDC/JWKS:
+It issues its own HS256 access/refresh JWTs using a server-only signing key. Protected API routes accept only tokens carrying `token_type=access`; refresh tokens cannot be used as bearer access tokens.
 
-```text
-Supabase__JwtSecret=
-```
-
-If the existing Loyalty Supabase project still uses legacy HS256 signing, set the existing project JWT secret only in the server runtime environment:
+Required JWT configuration:
 
 ```text
-Supabase__JwtSecret=<legacy-project-jwt-secret>
+Jwt__Issuer=backend-loyalty
+Jwt__Audience=loyalty-app
+Jwt__SigningKey=<strong random server-only secret, minimum 32 bytes>
+Jwt__AccessTokenMinutes=15
+Jwt__RefreshTokenDays=7
 ```
 
-Never expose this secret to the frontend or commit it to Git.
+### Existing password migration
+
+The legacy schema has `BusinessUser.passwordHash` and `AdminUser.passwordHash`, but users created through Supabase Auth commonly contain the placeholder `managed-by-supabase-auth` instead of the real password hash.
+
+For a zero-password-reset migration, the credential service can read the legacy bcrypt value from `auth.users.encrypted_password` **when that auth schema exists in the PostgreSQL database being migrated**. After a successful password verification it copies/adopts that bcrypt hash into the application-owned `BusinessUser.passwordHash` or `AdminUser.passwordHash`, so later logins no longer require the legacy auth schema.
+
+If the application password hash is still a placeholder and `auth.users` was not migrated, login returns `PASSWORD_MIGRATION_REQUIRED`; the safe fallback is a password reset rather than pretending the placeholder is a password hash.
+
+The auth schema is only a temporary password-migration source. No Supabase service/API call is made by the new backend.
 
 ### Members
 
-Legacy member authentication uses an opaque `member_session` cookie. The raw token is never stored in PostgreSQL; the existing `MemberSession.sessionTokenHash` SHA-256 value is validated by the .NET API together with expiry/revocation and the linked member/business.
+Member authentication remains the existing opaque `member_session` design. The raw cookie token is SHA-256 hashed and validated directly against `MemberSession`, including expiry/revocation and member/business ownership.
 
-Migrated member endpoints therefore do **not** trust client-supplied `x-member-id` or `x-member-business-id` headers. Those headers were safe in the Next.js application only because `proxy.ts` validated the cookie first and overwrote them before forwarding the request.
+The .NET service does not trust client-supplied `x-member-id` or `x-member-business-id` headers.
 
 ## Required configuration
 
-Copy `.env.example` values into your runtime environment. Do not commit real secrets.
-
-Required values:
-
 ```text
 ConnectionStrings__LoyaltyDb
-Supabase__Url
+Jwt__Issuer
+Jwt__Audience
+Jwt__SigningKey
 ```
 
-Optional frontend origins can be configured with:
+Optional trusted frontend origins:
 
 ```text
 Cors__AllowedOrigins__0=http://localhost:5173
 ```
 
-The API uses credentialed CORS so the member session cookie can be sent when the React frontend and API are served from separate trusted origins. Origins must be explicit; wildcard origins must not be used with credentials.
+Credentialed CORS is enabled only for explicit origins so member cookies can work when frontend/API use separate trusted origins.
 
 ## Local build
 
@@ -95,57 +95,31 @@ dotnet restore BackendLoyalty.sln
 dotnet build BackendLoyalty.sln
 ```
 
-Run the API after setting the required environment variables:
+## Docker / VPS verification
 
-```bash
-dotnet run --project src/BackendLoyalty.Api
-```
-
-## Docker
-
-```bash
-docker build -t backend-loyalty .
-docker run --rm -p 8080:8080 --env-file .env backend-loyalty
-```
-
-## VPS build + smoke verification
-
-The VPS does not need a locally installed .NET SDK; the Dockerfile builds with the .NET 10 SDK image.
-
-From the repository root on the VPS:
+The VPS does not need the .NET SDK installed on the host. From the repository root:
 
 ```bash
 git checkout feat/bootstrap-dotnet-api
 git pull
 cp .env.example .env.vps
-```
-
-Fill `.env.vps` with the real existing Loyalty PostgreSQL connection and Supabase URL. If PostgreSQL later runs directly on the same VPS host while the API runs in Docker, use `Host=host.docker.internal`; the validation script adds the Linux host-gateway mapping automatically.
-
-Then run:
-
-```bash
+# edit .env.vps with real PostgreSQL + JWT settings
 bash scripts/vps-verify.sh
 ```
 
-The script:
+The script builds through the .NET 10 Docker SDK image, starts an isolated container on `127.0.0.1:5092`, checks `/health` and `/health/db`, prints runtime stats, does not expose the API publicly, and does not apply EF migrations.
 
-1. builds the .NET 10 Docker image,
-2. starts an isolated validation container on `127.0.0.1:5092`,
-3. verifies `GET /health`,
-4. verifies `GET /health/db`, and
-5. prints a Docker memory/CPU snapshot.
+When PostgreSQL runs directly on the VPS host while the API runs in Docker, use `Host=host.docker.internal`; the verification script supplies the Linux host-gateway mapping.
 
-It does not expose the validation API publicly and does not run any EF migration.
+## Parity notes before cutover
 
-## Parity notes to validate before cutover
-
-- `transactionNotes` is accepted by the legacy add-stamp contract but the existing `Transaction` table has no notes column, so it is currently not persisted.
-- The legacy add-stamp flow issues milestone `MemberReward.expiresAt` using a 15-minute TTL even though auto-created `Reward.defaultExpiryDays` is 30. The .NET parity implementation currently preserves that behavior pending an explicit business-rule decision.
-- Member reward redemption tokens are a separate 5-minute token generated on demand by `POST /api/member/rewards/{memberRewardId}/token`; generating a new one expires previous ACTIVE tokens for that reward.
-- The legacy `AuditLog` table uses UUID columns while the main entity IDs are stored as text. Current signup flows generate UUID-shaped IDs, but audit remains best-effort and never blocks the business transaction.
-- Reward redemption in .NET conditionally claims both the token and `MemberReward` within one transaction, closing the legacy concurrent double-redemption race.
+- `transactionNotes` is accepted but the legacy `Transaction` table has no notes column.
+- Add-stamp currently preserves the legacy 15-minute milestone `MemberReward.expiresAt` behavior even though auto-created rewards default to 30 days.
+- Member redemption tokens are 5-minute tokens; issuing a new token expires previous ACTIVE tokens for that reward.
+- `AuditLog` remains best-effort because the legacy UUID audit columns do not perfectly match text IDs in the main schema.
+- .NET redemption conditionally claims token + reward in one transaction to prevent concurrent double redemption.
+- Standalone JWT refresh is currently stateless. Persistent refresh-session revocation/rotation should be added before broad production cutover.
 
 ## Database safety
 
-Do not generate or apply EF migrations against the existing production database during the parity phase. The current Prisma/PostgreSQL schema remains the source of truth until the backend migration has been validated.
+Do not run EF migrations against the existing production database during parity testing. Schema changes needed for the final standalone auth/session model should be introduced explicitly after build/runtime parity is verified.
