@@ -255,8 +255,42 @@ public sealed class StandaloneCredentialService(StandaloneAuthDbContext db) : IS
             if (shouldClose)
                 await connection.OpenAsync(cancellationToken);
 
+            // Standalone target: only this minimal app-owned bridge is needed.
+            // It contains legacy auth user IDs + bcrypt hashes, not Supabase runtime tables.
+            var bridgeHash = await TryGetPasswordHashAsync(
+                connection,
+                "SELECT \"passwordHash\" FROM \"LegacyAuthUserPassword\" WHERE \"authUserId\" = @userId LIMIT 1",
+                userId,
+                cancellationToken);
+
+            if (IsUsableBcryptHash(bridgeHash))
+                return bridgeHash;
+
+            // Transitional fallback: allows parity testing directly against the legacy
+            // Supabase PostgreSQL source, but the VPS target does not require auth.users.
+            return await TryGetPasswordHashAsync(
+                connection,
+                "SELECT encrypted_password FROM auth.users WHERE id::text = @userId LIMIT 1",
+                userId,
+                cancellationToken);
+        }
+        finally
+        {
+            if (shouldClose && connection.State == System.Data.ConnectionState.Open)
+                await connection.CloseAsync();
+        }
+    }
+
+    private static async Task<string?> TryGetPasswordHashAsync(
+        System.Data.Common.DbConnection connection,
+        string commandText,
+        string userId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
             await using var command = connection.CreateCommand();
-            command.CommandText = "SELECT encrypted_password FROM auth.users WHERE id::text = @userId LIMIT 1";
+            command.CommandText = commandText;
             var parameter = command.CreateParameter();
             parameter.ParameterName = "userId";
             parameter.Value = userId;
@@ -268,11 +302,6 @@ public sealed class StandaloneCredentialService(StandaloneAuthDbContext db) : IS
         catch (PostgresException ex) when (ex.SqlState is PostgresErrorCodes.UndefinedTable or PostgresErrorCodes.InvalidSchemaName)
         {
             return null;
-        }
-        finally
-        {
-            if (shouldClose && connection.State == System.Data.ConnectionState.Open)
-                await connection.CloseAsync();
         }
     }
 
@@ -291,5 +320,5 @@ public sealed class StandaloneCredentialService(StandaloneAuthDbContext db) : IS
     private static CredentialException PasswordMigrationRequired() =>
         new(
             CredentialFailureReason.PasswordMigrationRequired,
-            "Password migration is required for this account. Import the legacy auth schema or reset the password.");
+            "Password migration is required for this account. Import the legacy password bridge or reset the password.");
 }
