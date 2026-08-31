@@ -7,8 +7,13 @@ BEGIN
   IF to_regclass('auth.users') IS NULL THEN
     RAISE NOTICE 'auth.users is not present; accounts with placeholder hashes will need password reset/migration.';
   ELSE
-    EXECUTE 'SELECT COUNT(*) FROM auth.users WHERE encrypted_password IS NOT NULL AND encrypted_password <> '''''
-      INTO legacy_hash_count;
+    EXECUTE $sql$
+      SELECT COUNT(*)
+      FROM auth.users
+      WHERE encrypted_password IS NOT NULL
+        AND encrypted_password <> ''
+    $sql$ INTO legacy_hash_count;
+
     RAISE NOTICE 'legacy password hashes available: %', legacy_hash_count;
   END IF;
 END $$;
