@@ -56,8 +56,10 @@ builder.Services.AddOpenApi();
 builder.Services.AddDbContext<LoyaltyDbContext>(options =>
     options.UseNpgsql(connectionString));
 builder.Services.AddScoped<IMemberScanService, MemberScanService>();
+builder.Services.AddScoped<IMemberSessionResolver, MemberSessionResolver>();
 builder.Services.AddScoped<ILoyaltyStampService, LoyaltyStampService>();
 builder.Services.AddScoped<IRewardRedemptionService, RewardRedemptionService>();
+builder.Services.AddScoped<IMemberRewardTokenService, MemberRewardTokenService>();
 builder.Services.AddScoped<IAuditLogWriter, AuditLogWriter>();
 
 builder.Services
