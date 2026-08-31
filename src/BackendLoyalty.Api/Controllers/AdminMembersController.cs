@@ -32,14 +32,14 @@ public sealed class AdminMembersController(
                 new { memberBarcode = "memberBarcode is required and must be at most 64 characters" }));
         }
 
-        var role = SupabaseClaims.AppRole(User)?.ToLowerInvariant();
+        var role = LoyaltyClaims.Role(User)?.ToLowerInvariant();
         if (role is not ("staff" or "manager"))
         {
             return StatusCode(StatusCodes.Status403Forbidden,
                 ApiResponse<MemberScanResult>.Fail("FORBIDDEN", "Role is not allowed for this operation"));
         }
 
-        var businessId = SupabaseClaims.BusinessId(User);
+        var businessId = LoyaltyClaims.BusinessId(User);
         if (string.IsNullOrWhiteSpace(businessId))
         {
             return Unauthorized(ApiResponse<MemberScanResult>.Fail(
@@ -79,16 +79,16 @@ public sealed class AdminMembersController(
                 }));
         }
 
-        var role = SupabaseClaims.AppRole(User)?.ToLowerInvariant();
+        var role = LoyaltyClaims.Role(User)?.ToLowerInvariant();
         if (role is not ("staff" or "manager"))
         {
             return StatusCode(StatusCodes.Status403Forbidden,
                 ApiResponse<AddStampResult>.Fail("FORBIDDEN", "Role is not allowed for this operation"));
         }
 
-        var userId = SupabaseClaims.UserId(User);
-        var businessId = SupabaseClaims.BusinessId(User);
-        var outletId = SupabaseClaims.OutletId(User);
+        var userId = LoyaltyClaims.UserId(User);
+        var businessId = LoyaltyClaims.BusinessId(User);
+        var outletId = LoyaltyClaims.OutletId(User);
 
         if (string.IsNullOrWhiteSpace(userId))
         {
