@@ -1,6 +1,8 @@
 using BackendLoyalty.Api.Contracts;
+using BackendLoyalty.Application.Auditing;
 using BackendLoyalty.Application.Loyalty;
 using BackendLoyalty.Application.Members;
+using BackendLoyalty.Infrastructure.Auditing;
 using BackendLoyalty.Infrastructure.Loyalty;
 using BackendLoyalty.Infrastructure.Members;
 using BackendLoyalty.Infrastructure.Persistence;
@@ -31,6 +33,7 @@ builder.Services.AddDbContext<LoyaltyDbContext>(options =>
     options.UseNpgsql(connectionString));
 builder.Services.AddScoped<IMemberScanService, MemberScanService>();
 builder.Services.AddScoped<ILoyaltyStampService, LoyaltyStampService>();
+builder.Services.AddScoped<IAuditLogWriter, AuditLogWriter>();
 
 builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
