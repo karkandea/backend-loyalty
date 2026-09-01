@@ -189,9 +189,21 @@ public sealed class StandaloneCredentialService(StandaloneAuthDbContext db) : IS
         string businessId,
         CancellationToken cancellationToken)
     {
-        var membership = await db.BusinessUsers
-            .Where(x => x.BusinessId == businessId && x.IsActive && (x.AuthUserId == userId || x.Id == userId))
-            .SingleOrDefaultAsync(cancellationToken);
+        BusinessUser? membership;
+        if (Guid.TryParse(userId, out var authUserGuid))
+        {
+            var normalizedAuthUserId = authUserGuid.ToString();
+            membership = await db.BusinessUsers
+                .Where(x => x.BusinessId == businessId && x.IsActive &&
+                            (x.Id == userId || x.AuthUserId == normalizedAuthUserId))
+                .SingleOrDefaultAsync(cancellationToken);
+        }
+        else
+        {
+            membership = await db.BusinessUsers
+                .Where(x => x.BusinessId == businessId && x.IsActive && x.Id == userId)
+                .SingleOrDefaultAsync(cancellationToken);
+        }
 
         if (membership is null)
             return null;
@@ -222,8 +234,16 @@ public sealed class StandaloneCredentialService(StandaloneAuthDbContext db) : IS
         if (string.Equals(authKind, "admin", StringComparison.OrdinalIgnoreCase))
             return await db.AdminUsers.AnyAsync(x => x.Id == userId && x.IsActive, cancellationToken);
 
+        if (Guid.TryParse(userId, out var authUserGuid))
+        {
+            var normalizedAuthUserId = authUserGuid.ToString();
+            return await db.BusinessUsers.AnyAsync(
+                x => x.IsActive && (x.Id == userId || x.AuthUserId == normalizedAuthUserId),
+                cancellationToken);
+        }
+
         return await db.BusinessUsers.AnyAsync(
-            x => x.IsActive && (x.AuthUserId == userId || x.Id == userId),
+            x => x.IsActive && x.Id == userId,
             cancellationToken);
     }
 
