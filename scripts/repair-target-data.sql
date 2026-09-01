@@ -73,6 +73,31 @@ BEGIN
     RAISE EXCEPTION 'REFUSING REPAIR: expected POS Demo outlet was not found exactly once';
   END IF;
 
+  SELECT COUNT(*) INTO fixture_count
+  FROM "Card"
+  WHERE id = '44444444-5555-6666-7777-888888888888'
+    AND "businessId" = '22222222-3333-4444-5555-666666666666'
+    AND name = 'Coffee Card'
+    AND "requiredStamps" = 5
+    AND status = 'ACTIVE'
+    AND "isDeleted" = false;
+
+  IF fixture_count <> 1 THEN
+    RAISE EXCEPTION 'REFUSING REPAIR: expected POS Demo card no longer matches requiredStamps=5 ACTIVE state';
+  END IF;
+
+  SELECT COUNT(*) INTO fixture_count
+  FROM "Card"
+  WHERE id = '4f8fc846-540c-434c-bada-7d62b7858b36'
+    AND "businessId" = 'e27a939a-6001-41e7-b5e5-636e70aad849'
+    AND "requiredStamps" = 5
+    AND status = 'ACTIVE'
+    AND "isDeleted" = false;
+
+  IF fixture_count <> 1 THEN
+    RAISE EXCEPTION 'REFUSING REPAIR: expected Lungo card no longer matches requiredStamps=5 ACTIVE state';
+  END IF;
+
   SELECT COUNT(*) INTO duplicate_barcode_count
   FROM "Member"
   WHERE "businessId" = '22222222-3333-4444-5555-666666666666'
