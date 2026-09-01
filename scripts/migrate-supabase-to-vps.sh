@@ -158,14 +158,7 @@ docker run --rm \
   -e SOURCE_DB_URL="$SOURCE_DB_URL" \
   -v "$WORK_DIR:/work" \
   postgres:17 \
-  sh -ceu '
-    psql "$SOURCE_DB_URL" -v ON_ERROR_STOP=1 -c "COPY (
-      SELECT id::text, encrypted_password
-      FROM auth.users
-      WHERE encrypted_password IS NOT NULL
-        AND encrypted_password <> '\''\''
-    ) TO STDOUT WITH (FORMAT csv)" > /work/legacy-auth.csv
-  '
+  sh -ceu "psql \"\$SOURCE_DB_URL\" -v ON_ERROR_STOP=1 -c \"COPY (SELECT id::text, encrypted_password FROM auth.users WHERE encrypted_password IS NOT NULL AND length(encrypted_password) > 0) TO STDOUT WITH (FORMAT csv)\" > /work/legacy-auth.csv"
 
 echo "==> Restoring application schema/data into isolated VPS PostgreSQL 17"
 docker run --rm \
@@ -226,7 +219,7 @@ if ! diff -u "$WORK_DIR/source-counts.txt" "$WORK_DIR/target-counts.txt"; then
   exit 1
 fi
 
-SOURCE_AUTH_COUNT="$(docker run --rm -e SOURCE_DB_URL="$SOURCE_DB_URL" postgres:17 sh -ceu 'psql "$SOURCE_DB_URL" -Atv ON_ERROR_STOP=1 -c "SELECT count(*) FROM auth.users WHERE encrypted_password IS NOT NULL AND encrypted_password <> '\''\''"')"
+SOURCE_AUTH_COUNT="$(docker run --rm -e SOURCE_DB_URL="$SOURCE_DB_URL" postgres:17 sh -ceu 'psql "$SOURCE_DB_URL" -Atv ON_ERROR_STOP=1 -c "SELECT count(*) FROM auth.users WHERE encrypted_password IS NOT NULL AND length(encrypted_password) > 0"')"
 TARGET_AUTH_COUNT="$(docker exec -e PGPASSWORD="$DB_APP_PASSWORD" "$DB_CONTAINER" psql -h 127.0.0.1 -U "$TARGET_APP_USER" -d "$TARGET_DB" -Atv ON_ERROR_STOP=1 -c 'SELECT count(*) FROM "LegacyAuthUserPassword"')"
 
 if [[ "$SOURCE_AUTH_COUNT" != "$TARGET_AUTH_COUNT" ]]; then
