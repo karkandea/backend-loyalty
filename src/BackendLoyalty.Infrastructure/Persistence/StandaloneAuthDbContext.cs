@@ -1,5 +1,6 @@
 using BackendLoyalty.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 namespace BackendLoyalty.Infrastructure.Persistence;
 
@@ -12,6 +13,10 @@ public sealed class StandaloneAuthDbContext(DbContextOptions<StandaloneAuthDbCon
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        var authUserIdConverter = new ValueConverter<string, Guid>(
+            value => Guid.Parse(value),
+            value => value.ToString());
+
         modelBuilder.Entity<Business>(entity =>
         {
             entity.ToTable("Business");
@@ -28,7 +33,10 @@ public sealed class StandaloneAuthDbContext(DbContextOptions<StandaloneAuthDbCon
             entity.HasKey(x => x.Id);
             entity.Property(x => x.Id).HasColumnName("id");
             entity.Property(x => x.BusinessId).HasColumnName("businessId");
-            entity.Property(x => x.AuthUserId).HasColumnName("authUserId");
+            entity.Property(x => x.AuthUserId)
+                .HasColumnName("authUserId")
+                .HasColumnType("uuid")
+                .HasConversion(authUserIdConverter);
             entity.Property(x => x.Email).HasColumnName("email");
             entity.Property(x => x.PasswordHash).HasColumnName("passwordHash");
             entity.Property(x => x.FullName).HasColumnName("fullName");
