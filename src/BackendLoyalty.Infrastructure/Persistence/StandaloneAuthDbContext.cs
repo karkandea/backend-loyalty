@@ -13,9 +13,9 @@ public sealed class StandaloneAuthDbContext(DbContextOptions<StandaloneAuthDbCon
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
-        var authUserIdConverter = new ValueConverter<string, Guid>(
-            value => Guid.Parse(value),
-            value => value.ToString());
+        var authUserIdConverter = new ValueConverter<string?, Guid?>(
+            value => string.IsNullOrWhiteSpace(value) ? null : Guid.Parse(value),
+            value => value.HasValue ? value.Value.ToString() : null);
 
         modelBuilder.Entity<Business>(entity =>
         {
