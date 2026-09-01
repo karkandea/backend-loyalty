@@ -131,12 +131,9 @@ public sealed class LoyaltyStampService(LoyaltyDbContext dbContext) : ILoyaltySt
             milestoneHits.AddRange(originalMilestoneHits);
             remaining -= applied;
 
-            if (remaining <= 0)
-            {
-                activeMemberCard = activeMemberCard with { CurrentStamps = newStamps };
-                break;
-            }
-
+            // Completion must be processed even when this exact batch consumed the
+            // final required stamp (for example 4 -> 5 with +1). The legacy ordering
+            // used to break here when remaining reached zero, leaving a 5/5 card active.
             if (newStamps < requiredStamps)
             {
                 activeMemberCard = activeMemberCard with { CurrentStamps = newStamps };
