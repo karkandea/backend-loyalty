@@ -159,7 +159,8 @@ docker run --rm \
 
 # Supabase RLS policies/runtime ACLs can depend on auth functions and API roles.
 # The standalone target is API-only PostgreSQL, so do not carry those runtime policies over.
-awk '!/ (POLICY|ROW SECURITY|ACL|DEFAULT ACL) /' "$WORK_DIR/restore.list" > "$WORK_DIR/restore.filtered.list"
+# PostgreSQL creates public automatically for a new database, so skip the dump's duplicate CREATE SCHEMA public entry.
+awk '!/ (POLICY|ROW SECURITY|ACL|DEFAULT ACL) / && !/ SCHEMA - public /' "$WORK_DIR/restore.list" > "$WORK_DIR/restore.filtered.list"
 
 echo "==> Exporting only legacy auth IDs + bcrypt hashes (not the Supabase auth schema)"
 docker run --rm \
