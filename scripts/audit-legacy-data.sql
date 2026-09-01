@@ -100,23 +100,25 @@ WHERE (status = 'REDEEMED' AND "redeemedAt" IS NULL)
    OR ("expiresAt" IS NOT NULL AND "expiresAt" < "issuedAt")
 ORDER BY "createdAt";
 
-\echo '\n[9] RewardToken lifecycle inconsistencies'
+\echo '\n[9] RewardToken attribution inconsistencies'
+-- Legacy redemption keeps token.status = ACTIVE and records consumption via usedAt + staff/outlet.
+-- Therefore ACTIVE + usedAt is valid. Only flag incomplete/one-sided consumption attribution.
 SELECT id, "businessId", status, "expiresAt", "usedAt", "usedByStaffId", "usedAtOutletId"
 FROM "RewardToken"
-WHERE (status = 'USED' AND "usedAt" IS NULL)
-   OR (status <> 'USED' AND "usedAt" IS NOT NULL)
-   OR ("usedAt" IS NOT NULL AND "usedByStaffId" IS NULL)
+WHERE ("usedAt" IS NOT NULL AND ("usedByStaffId" IS NULL OR "usedAtOutletId" IS NULL))
+   OR ("usedAt" IS NULL AND ("usedByStaffId" IS NOT NULL OR "usedAtOutletId" IS NOT NULL))
 ORDER BY "createdAt";
 
-\echo '\n[10] Expired-but-active reward tokens'
+\echo '\n[10] Expired unused tokens still marked ACTIVE'
 SELECT id, "businessId", status, "expiresAt", "usedAt"
 FROM "RewardToken"
 WHERE status = 'ACTIVE'
+  AND "usedAt" IS NULL
   AND "expiresAt" IS NOT NULL
   AND "expiresAt" <= now()
 ORDER BY "expiresAt";
 
-\echo '\n[11] Expired/revoked member sessions still present'
+\echo '\n[11] MemberSession retention snapshot'
 SELECT
   COUNT(*) FILTER (WHERE "expiresAt" <= now() AND "revokedAt" IS NULL) AS expired_not_revoked,
   COUNT(*) FILTER (WHERE "revokedAt" IS NOT NULL) AS revoked,
