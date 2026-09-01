@@ -14,7 +14,7 @@ cleanup() {
 trap cleanup EXIT
 chmod 700 "$WORK_DIR"
 
-for command in docker openssl grep cut awk diff; do
+for command in docker openssl grep cut awk diff sed; do
   if ! command -v "$command" >/dev/null 2>&1; then
     echo "ERROR: required command not found: $command"
     exit 1
@@ -78,7 +78,6 @@ if [[ -z "$SOURCE_DB_URL" ]]; then
   echo "ERROR: source database URL is required"
   exit 1
 fi
-
 export SOURCE_DB_URL
 
 echo "==> Starting isolated PostgreSQL 17 target (no host port exposed)"
@@ -122,6 +121,34 @@ docker run --rm \
     fi
   '
 
+echo "==> Discovering public foreign keys that depend on Supabase auth.users"
+docker run --rm \
+  -e SOURCE_DB_URL="$SOURCE_DB_URL" \
+  -v "$WORK_DIR:/work" \
+  postgres:17 \
+  sh -ceu '
+    psql "$SOURCE_DB_URL" -At -F "|" -v ON_ERROR_STOP=1 -c "
+      SELECT c.relname, con.conname
+      FROM pg_constraint con
+      JOIN pg_class c ON c.oid = con.conrelid
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      JOIN pg_class rc ON rc.oid = con.confrelid
+      JOIN pg_namespace rn ON rn.oid = rc.relnamespace
+      WHERE con.contype = '\''f'\''
+        AND n.nspname = '\''public'\''
+        AND rn.nspname = '\''auth'\''
+        AND rc.relname = '\''users'\''
+      ORDER BY c.relname, con.conname
+    " > /work/auth-user-fks.txt
+  '
+
+if [[ -s "$WORK_DIR/auth-user-fks.txt" ]]; then
+  echo "Supabase-auth FK constraints to omit from standalone target:"
+  sed 's/^/  - /' "$WORK_DIR/auth-user-fks.txt"
+else
+  echo "No public foreign keys to auth.users found."
+fi
+
 echo "==> Creating non-superuser application role and empty target database"
 docker exec -i "$DB_CONTAINER" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
   -v "app_password=$DB_APP_PASSWORD" <<'SQL'
@@ -133,7 +160,7 @@ SELECT format('ALTER ROLE loyalty_app PASSWORD %L', :'app_password')
 CREATE DATABASE loyalty OWNER loyalty_app;
 SQL
 
-echo "==> Preparing minimal Supabase compatibility required by legacy defaults"
+echo "==> Preparing minimal compatibility for legacy UUID defaults"
 docker exec -i "$DB_CONTAINER" psql -U postgres -d "$TARGET_DB" -v ON_ERROR_STOP=1 <<'SQL'
 CREATE SCHEMA IF NOT EXISTS extensions;
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA extensions;
@@ -157,10 +184,30 @@ docker run --rm \
     pg_restore --list /work/public.dump > /work/restore.list
   '
 
-# Supabase RLS policies/runtime ACLs can depend on auth functions and API roles.
-# The standalone target is API-only PostgreSQL, so do not carry those runtime policies over.
-# PostgreSQL creates public automatically for a new database, so skip the dump's duplicate CREATE SCHEMA public entry.
-awk '!/ (POLICY|ROW SECURITY|ACL|DEFAULT ACL) / && !/ SCHEMA - public /' "$WORK_DIR/restore.list" > "$WORK_DIR/restore.filtered.list"
+echo "==> Building standalone restore list"
+awk '
+  / (POLICY|ROW SECURITY|ACL|DEFAULT ACL) / { next }
+  / SCHEMA - public / { next }
+  { print }
+' "$WORK_DIR/restore.list" > "$WORK_DIR/restore.base.list"
+
+awk -F'|' '
+  NR==FNR {
+    if (NF >= 2) marker[" FK CONSTRAINT public " $1 " " $2 " "] = 1
+    next
+  }
+  {
+    for (m in marker) {
+      if (index($0, m) > 0) next
+    }
+    print
+  }
+' "$WORK_DIR/auth-user-fks.txt" "$WORK_DIR/restore.base.list" > "$WORK_DIR/restore.filtered.list"
+
+if grep -E ' (POLICY|ROW SECURITY|ACL|DEFAULT ACL) ' "$WORK_DIR/restore.filtered.list" >/dev/null; then
+  echo "ERROR: filtered restore list still contains Supabase policy/ACL entries"
+  exit 1
+fi
 
 echo "==> Exporting only legacy auth IDs + bcrypt hashes (not the Supabase auth schema)"
 docker run --rm \
@@ -211,8 +258,6 @@ SQL
 echo "==> Restoring application pre-data into isolated VPS PostgreSQL 17"
 restore_section pre-data
 
-# Supabase may have emitted FORCE ROW LEVEL SECURITY inside CREATE TABLE entries.
-# Disable it before COPY/table-data restore, then again after post-data as a safety net.
 echo "==> Disabling legacy RLS before table-data restore"
 disable_public_rls
 
@@ -224,6 +269,20 @@ restore_section post-data
 
 echo "==> Ensuring standalone target has RLS disabled"
 disable_public_rls
+
+echo "==> Verifying no target foreign key still references auth schema"
+TARGET_AUTH_FKS="$(docker exec -e PGPASSWORD="$DB_APP_PASSWORD" "$DB_CONTAINER" \
+  psql -h 127.0.0.1 -U "$TARGET_APP_USER" -d "$TARGET_DB" -Atv ON_ERROR_STOP=1 -c "
+    SELECT count(*)
+    FROM pg_constraint con
+    JOIN pg_class rc ON rc.oid = con.confrelid
+    JOIN pg_namespace rn ON rn.oid = rc.relnamespace
+    WHERE con.contype = 'f' AND rn.nspname = 'auth'
+  ")"
+if [[ "$TARGET_AUTH_FKS" != "0" ]]; then
+  echo "ERROR: target still contains $TARGET_AUTH_FKS foreign key(s) into auth schema"
+  exit 1
+fi
 
 echo "==> Creating minimal app-owned legacy password bridge"
 docker exec -e PGPASSWORD="$DB_APP_PASSWORD" -i "$DB_CONTAINER" \
