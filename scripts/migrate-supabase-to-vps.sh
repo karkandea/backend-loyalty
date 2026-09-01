@@ -133,6 +133,14 @@ SELECT format('ALTER ROLE loyalty_app PASSWORD %L', :'app_password')
 CREATE DATABASE loyalty OWNER loyalty_app;
 SQL
 
+echo "==> Preparing minimal Supabase compatibility required by legacy defaults"
+docker exec -i "$DB_CONTAINER" psql -U postgres -d "$TARGET_DB" -v ON_ERROR_STOP=1 <<'SQL'
+CREATE SCHEMA IF NOT EXISTS extensions;
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA extensions;
+GRANT USAGE ON SCHEMA extensions TO loyalty_app;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA extensions TO loyalty_app;
+SQL
+
 echo "==> Dumping public application schema + data from Supabase"
 docker run --rm \
   -e SOURCE_DB_URL="$SOURCE_DB_URL" \
@@ -149,7 +157,7 @@ docker run --rm \
     pg_restore --list /work/public.dump > /work/restore.list
   '
 
-# Supabase RLS policies/ROW SECURITY entries can depend on auth functions and API roles.
+# Supabase RLS policies/runtime ACLs can depend on auth functions and API roles.
 # The standalone target is API-only PostgreSQL, so do not carry those runtime policies over.
 awk '!/ (POLICY|ROW SECURITY|ACL|DEFAULT ACL) /' "$WORK_DIR/restore.list" > "$WORK_DIR/restore.filtered.list"
 
@@ -160,24 +168,61 @@ docker run --rm \
   postgres:17 \
   sh -ceu "psql \"\$SOURCE_DB_URL\" -v ON_ERROR_STOP=1 -c \"COPY (SELECT id::text, encrypted_password FROM auth.users WHERE encrypted_password IS NOT NULL AND length(encrypted_password) > 0) TO STDOUT WITH (FORMAT csv)\" > /work/legacy-auth.csv"
 
-echo "==> Restoring application schema/data into isolated VPS PostgreSQL 17"
-docker run --rm \
-  --network loyalty-internal \
-  -e PGPASSWORD="$DB_APP_PASSWORD" \
-  -v "$WORK_DIR:/work" \
-  postgres:17 \
-  pg_restore \
-    --host=loyalty-postgres \
-    --port=5432 \
-    --username=loyalty_app \
-    --dbname=loyalty \
-    --no-owner \
-    --no-privileges \
-    --clean \
-    --if-exists \
-    --exit-on-error \
-    --use-list=/work/restore.filtered.list \
-    /work/public.dump
+restore_section() {
+  local section="$1"
+  docker run --rm \
+    --network loyalty-internal \
+    -e PGPASSWORD="$DB_APP_PASSWORD" \
+    -v "$WORK_DIR:/work" \
+    postgres:17 \
+    pg_restore \
+      --host=loyalty-postgres \
+      --port=5432 \
+      --username=loyalty_app \
+      --dbname=loyalty \
+      --no-owner \
+      --no-privileges \
+      --exit-on-error \
+      --section="$section" \
+      --use-list=/work/restore.filtered.list \
+      /work/public.dump
+}
+
+disable_public_rls() {
+  docker exec -e PGPASSWORD="$DB_APP_PASSWORD" -i "$DB_CONTAINER" \
+    psql -h 127.0.0.1 -U "$TARGET_APP_USER" -d "$TARGET_DB" -v ON_ERROR_STOP=1 <<'SQL'
+DO $$
+DECLARE
+  item record;
+BEGIN
+  FOR item IN
+    SELECT schemaname, tablename
+    FROM pg_tables
+    WHERE schemaname = 'public'
+  LOOP
+    EXECUTE format('ALTER TABLE %I.%I NO FORCE ROW LEVEL SECURITY', item.schemaname, item.tablename);
+    EXECUTE format('ALTER TABLE %I.%I DISABLE ROW LEVEL SECURITY', item.schemaname, item.tablename);
+  END LOOP;
+END $$;
+SQL
+}
+
+echo "==> Restoring application pre-data into isolated VPS PostgreSQL 17"
+restore_section pre-data
+
+# Supabase may have emitted FORCE ROW LEVEL SECURITY inside CREATE TABLE entries.
+# Disable it before COPY/table-data restore, then again after post-data as a safety net.
+echo "==> Disabling legacy RLS before table-data restore"
+disable_public_rls
+
+echo "==> Restoring application data"
+restore_section data
+
+echo "==> Restoring indexes, constraints, and remaining post-data"
+restore_section post-data
+
+echo "==> Ensuring standalone target has RLS disabled"
+disable_public_rls
 
 echo "==> Creating minimal app-owned legacy password bridge"
 docker exec -e PGPASSWORD="$DB_APP_PASSWORD" -i "$DB_CONTAINER" \
