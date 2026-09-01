@@ -155,7 +155,7 @@ BEGIN
     SELECT COUNT(*)
     FROM "BusinessUser" b
     LEFT JOIN "LegacyAuthUserPassword" l
-      ON l."authUserId" = COALESCE(NULLIF(b."authUserId", ''), b.id)
+      ON l."authUserId" = COALESCE(b."authUserId"::text, b.id)
     WHERE b."passwordHash" = 'managed-by-supabase-auth'
       AND l."authUserId" IS NULL
   $sql$ INTO missing_business;
