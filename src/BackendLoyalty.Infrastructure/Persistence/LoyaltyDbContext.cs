@@ -72,7 +72,10 @@ public sealed class LoyaltyDbContext(DbContextOptions<LoyaltyDbContext> options)
             entity.HasIndex(x => x.BusinessId);
             entity.HasIndex(x => x.MemberId);
             entity.HasIndex(x => x.CardId);
-            entity.HasIndex(x => new { x.BusinessId, x.MemberId, x.IsActive }).IsUnique();
+            entity.HasIndex(x => new { x.BusinessId, x.MemberId })
+                .HasDatabaseName("MemberCard_one_active_per_member_key")
+                .IsUnique()
+                .HasFilter("\"isActive\" = true");
         });
 
         modelBuilder.Entity<Card>(entity =>
