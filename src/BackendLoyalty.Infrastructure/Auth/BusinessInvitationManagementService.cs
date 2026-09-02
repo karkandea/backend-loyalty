@@ -53,16 +53,20 @@ public sealed class BusinessInvitationManagementService(StandaloneAuthDbContext 
                         x.RevokedAt == null &&
                         x.ExpiresAt > now)
             .OrderByDescending(x => x.CreatedAt)
+            .ToListAsync(cancellationToken);
+
+        var items = rows
             .Select(x => new TeamInvitationSummary(
                 x.Id,
                 x.Email,
                 x.Role,
+                ReadPermissions(x.Permissions),
                 x.ExpiresAt,
                 x.CreatedAt,
                 x.RequiresPassword))
-            .ToListAsync(cancellationToken);
+            .ToList();
 
-        return (InvitationManagementResult.Success, rows);
+        return (InvitationManagementResult.Success, items);
     }
 
     public async Task<InvitationManagementResult> RevokeAsync(
@@ -114,5 +118,19 @@ public sealed class BusinessInvitationManagementService(StandaloneAuthDbContext 
         return db.BusinessUsers
             .Where(x => x.IsActive && x.BusinessId == businessId && x.Id == userId)
             .ToListAsync(cancellationToken);
+    }
+
+    private static IReadOnlyList<string> ReadPermissions(JsonDocument? permissions)
+    {
+        if (permissions is null || permissions.RootElement.ValueKind != JsonValueKind.Array)
+            return Array.Empty<string>();
+
+        return permissions.RootElement
+            .EnumerateArray()
+            .Where(x => x.ValueKind == JsonValueKind.String)
+            .Select(x => x.GetString())
+            .Where(x => x is not null)
+            .Select(x => x!)
+            .ToArray();
     }
 }
