@@ -14,7 +14,7 @@ set -a
 source .env.vps
 set +a
 
-: "${LOYALTY_DB_PASSWORD:?LOYALTY_DB_PASSWORD is required in .env.vps}"
+: "${LOYALTY_DB_PASSWORD:?LOYALY_DB_PASSWORD is required in .env.vps}"
 
 DB_CONTAINER="${LOYALTY_DB_CONTAINER:-loyalty-postgres}"
 DB_NAME="${LOYALTY_DB_NAME:-loyalty}"
@@ -186,13 +186,17 @@ DECLARE
   n bigint;
 BEGIN
   SELECT COUNT(*) INTO n
-  FROM pg_indexes
-  WHERE schemaname = 'public'
-    AND tablename = 'MemberCard'
-    AND indexname = 'MemberCard_one_active_per_member_key'
-    AND indexdef ILIKE '%WHERE ("isActive" = true)%';
+  FROM pg_class i
+  JOIN pg_namespace ns ON ns.oid = i.relnamespace
+  JOIN pg_index ix ON ix.indexrelid = i.oid
+  JOIN pg_class t ON t.oid = ix.indrelid
+  WHERE ns.nspname = 'public'
+    AND t.relname = 'MemberCard'
+    AND i.relname = 'MemberCard_one_active_per_member_key'
+    AND ix.indisunique = true
+    AND ix.indpred IS NOT NULL;
   IF n <> 1 THEN
-    RAISE EXCEPTION 'POST-HARDEN VALIDATION FAILED: active-only MemberCard unique index missing or unexpected';
+    RAISE EXCEPTION 'POST-HARDEN VALIDATION FAILED: active-only partial unique MemberCard index missing or unexpected';
   END IF;
 
   SELECT COUNT(*) INTO n
