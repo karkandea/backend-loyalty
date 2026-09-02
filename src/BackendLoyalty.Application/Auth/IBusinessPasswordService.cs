@@ -68,6 +68,11 @@ public interface ITransactionalEmailSender
         string resetUrl,
         CancellationToken cancellationToken);
 
+    Task<bool> SendAdminPasswordResetAsync(
+        string recipient,
+        string resetUrl,
+        CancellationToken cancellationToken);
+
     Task<bool> SendBusinessInvitationAsync(
         string recipient,
         string businessName,
