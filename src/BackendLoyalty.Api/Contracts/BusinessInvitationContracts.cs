@@ -14,7 +14,8 @@ public sealed record ResendOwnerVerificationRequest(
 
 public sealed record CreateTeamInvitationRequest(
     [Required, EmailAddress] string Email,
-    [Required, RegularExpression("^(?i:ADMIN|STAFF)$")] string Role);
+    [Required, RegularExpression("^(?i:ADMIN|STAFF)$")] string Role,
+    string[]? Permissions = null);
 
 public sealed record RegisterBusinessInvitationRequest(
     [Required, MinLength(8)] string Token,
