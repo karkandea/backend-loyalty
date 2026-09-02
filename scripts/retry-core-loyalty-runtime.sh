@@ -4,11 +4,11 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-ENV_FILE="${ENV_FILE:-.env.vps}"
+ENV_FILE="${ENV_FILE:-$ROOT_DIR/.env.vps}"
 DB_CONTAINER="${DB_CONTAINER:-loyalty-postgres}"
 DB_USER="${DB_USER:-loyalty_app}"
 DB_NAME="${DB_NAME:-loyalty}"
-SOURCE_SCRIPT="scripts/smoke-core-loyalty-runtime.sh"
+SOURCE_SCRIPT="$ROOT_DIR/scripts/smoke-core-loyalty-runtime.sh"
 
 [[ -f "$ENV_FILE" ]] || { echo "ERROR: $ENV_FILE not found" >&2; exit 1; }
 [[ -f "$SOURCE_SCRIPT" ]] || { echo "ERROR: $SOURCE_SCRIPT not found" >&2; exit 1; }
@@ -33,7 +33,9 @@ WHERE table_schema='public'
 SQL
 )"
 
-TMP_SCRIPT="$(mktemp /tmp/loyalty-core-runtime-schema-aware.XXXXXX.sh)"
+# Keep the generated script under scripts/ so its own ROOT_DIR calculation still
+# resolves to the repository root rather than / when executed from /tmp.
+TMP_SCRIPT="$(mktemp "$ROOT_DIR/scripts/.core-runtime-schema-aware.XXXXXX.sh")"
 cleanup() { rm -f "$TMP_SCRIPT"; }
 trap cleanup EXIT
 
@@ -63,6 +65,6 @@ esac
 
 chmod 700 "$TMP_SCRIPT"
 bash -n "$TMP_SCRIPT"
-bash "$TMP_SCRIPT"
+ENV_FILE="$ENV_FILE" bash "$TMP_SCRIPT"
 
 echo "PASS: schema-aware core loyalty runtime retry completed successfully."
