@@ -10,7 +10,19 @@ if [[ -z "${SOURCE_DB_URL:-}" ]]; then
   echo
 fi
 
+# Trim accidental surrounding whitespace without echoing the secret.
+SOURCE_DB_URL="${SOURCE_DB_URL#"${SOURCE_DB_URL%%[![:space:]]*}"}"
+SOURCE_DB_URL="${SOURCE_DB_URL%"${SOURCE_DB_URL##*[![:space:]]}"}"
+
 [[ -n "${SOURCE_DB_URL:-}" ]] || { echo 'ERROR: SOURCE_DB_URL is required' >&2; exit 1; }
+case "$SOURCE_DB_URL" in
+  postgres://*|postgresql://*) ;;
+  *)
+    echo 'ERROR: SOURCE_DB_URL must start with postgres:// or postgresql://; source was not contacted.' >&2
+    exit 1
+    ;;
+esac
+
 command -v psql >/dev/null 2>&1 || { echo 'ERROR: psql is required' >&2; exit 1; }
 
 PSQL=(psql "$SOURCE_DB_URL" -v ON_ERROR_STOP=1 -X -P pager=off)
