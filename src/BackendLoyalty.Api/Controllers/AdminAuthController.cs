@@ -9,7 +9,8 @@ namespace BackendLoyalty.Api.Controllers;
 [Route("api/admin/auth")]
 public sealed class AdminAuthController(
     IStandaloneCredentialService credentialService,
-    ILoyaltyJwtTokenIssuer tokenIssuer) : ControllerBase
+    ILoyaltyJwtTokenIssuer tokenIssuer,
+    IRefreshTokenSessionService refreshSessions) : ControllerBase
 {
     [HttpPost("login")]
     public async Task<IActionResult> Login(
@@ -23,12 +24,19 @@ public sealed class AdminAuthController(
                 request.Password,
                 cancellationToken);
 
-            var tokens = tokenIssuer.Issue(new LoyaltyTokenContext(
+            var context = new LoyaltyTokenContext(
                 profile.UserId,
                 "admin",
                 profile.Role,
                 profile.BusinessId,
-                profile.OutletId));
+                profile.OutletId);
+            var tokens = tokenIssuer.Issue(context);
+
+            await refreshSessions.RegisterAsync(
+                tokens.RefreshToken,
+                tokens.RefreshExpiresAt,
+                ToRefreshContext(context),
+                cancellationToken);
 
             return Ok(ApiResponse<object>.Ok(new
             {
@@ -47,6 +55,9 @@ public sealed class AdminAuthController(
             return MapCredentialFailure(exception);
         }
     }
+
+    private static RefreshSessionContext ToRefreshContext(LoyaltyTokenContext context) =>
+        new(context.UserId, context.AuthKind, context.Role, context.BusinessId, context.OutletId);
 
     private IActionResult MapCredentialFailure(CredentialException exception)
     {
