@@ -49,7 +49,8 @@ public sealed class BusinessInvitationsController(
                 businessId,
                 userId,
                 request.Email,
-                request.Role),
+                request.Role,
+                request.Permissions),
             cancellationToken);
 
         if (issue is not null)
@@ -90,6 +91,7 @@ public sealed class BusinessInvitationsController(
             businessName = details.BusinessName,
             email = details.Email,
             role = details.Role,
+            permissions = details.Permissions,
             expiresAt = details.ExpiresAt,
             requiresPassword = details.RequiresPassword,
         }));
