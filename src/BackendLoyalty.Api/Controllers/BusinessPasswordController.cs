@@ -4,6 +4,7 @@ using BackendLoyalty.Api.Contracts;
 using BackendLoyalty.Application.Auth;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace BackendLoyalty.Api.Controllers;
 
@@ -19,6 +20,7 @@ public sealed class BusinessPasswordController(
         "If the email exists, you’ll receive a password reset link within a few minutes.";
 
     [AllowAnonymous]
+    [EnableRateLimiting("email-action")]
     [HttpPost("forgot-password")]
     public async Task<IActionResult> ForgotPassword(
         [FromBody] ForgotPasswordRequest request,
@@ -56,6 +58,7 @@ public sealed class BusinessPasswordController(
     }
 
     [AllowAnonymous]
+    [EnableRateLimiting("email-action")]
     [HttpPost("reset-password")]
     public async Task<IActionResult> ResetPassword(
         [FromBody] ResetPasswordRequest request,
@@ -80,6 +83,7 @@ public sealed class BusinessPasswordController(
     }
 
     [Authorize]
+    [EnableRateLimiting("email-action")]
     [HttpPost("update-password")]
     public async Task<IActionResult> UpdatePassword(
         [FromBody] UpdatePasswordRequest request,
