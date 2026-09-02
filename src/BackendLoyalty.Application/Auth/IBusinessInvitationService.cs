@@ -26,7 +26,8 @@ public sealed record TeamInvitationRequest(
     string BusinessId,
     string InvitedBy,
     string Email,
-    string Role);
+    string Role,
+    IReadOnlyList<string>? Permissions = null);
 
 public sealed record InvitationIssue(
     string InvitationId,
@@ -44,6 +45,7 @@ public sealed record InvitationDetails(
     string BusinessName,
     string Email,
     string Role,
+    IReadOnlyList<string> Permissions,
     DateTime ExpiresAt,
     bool RequiresPassword);
 
