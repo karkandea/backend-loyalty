@@ -1,6 +1,7 @@
 using System.Data;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using BackendLoyalty.Application.Auth;
 using BackendLoyalty.Domain.Entities;
 using BackendLoyalty.Infrastructure.Persistence;
@@ -234,7 +235,8 @@ public sealed class BusinessInvitationService(
             request.InvitedBy,
             identityRows.Count == 0,
             DateTime.UtcNow,
-            cancellationToken);
+            cancellationToken,
+            request.Permissions);
     }
 
     public async Task<InvitationDetails?> ResolveInvitationAsync(
@@ -265,6 +267,7 @@ public sealed class BusinessInvitationService(
             business.Name,
             row.Email,
             row.Role,
+            ReadPermissions(row.Permissions),
             row.ExpiresAt,
             row.RequiresPassword);
     }
@@ -329,6 +332,7 @@ public sealed class BusinessInvitationService(
                 PasswordHash = passwordHash,
                 FullName = fullName.Trim(),
                 Role = role,
+                Permissions = ClonePermissions(invite.Permissions),
                 IsActive = true,
                 LastLoginAt = null,
                 CreatedAt = now,
@@ -342,7 +346,10 @@ public sealed class BusinessInvitationService(
             membership.PasswordHash = passwordHash;
             membership.FullName = fullName.Trim();
             if (!string.Equals(membership.Role, "OWNER", StringComparison.OrdinalIgnoreCase))
+            {
                 membership.Role = role;
+                membership.Permissions = ClonePermissions(invite.Permissions);
+            }
             membership.IsActive = true;
             membership.UpdatedAt = now;
         }
@@ -459,6 +466,7 @@ public sealed class BusinessInvitationService(
                 PasswordHash = inheritedHash,
                 FullName = identityRows[0].FullName,
                 Role = role,
+                Permissions = ClonePermissions(invite.Permissions),
                 IsActive = true,
                 LastLoginAt = null,
                 CreatedAt = now,
@@ -469,7 +477,10 @@ public sealed class BusinessInvitationService(
         {
             membership.AuthUserId = identityId;
             if (!string.Equals(membership.Role, "OWNER", StringComparison.OrdinalIgnoreCase))
+            {
                 membership.Role = role;
+                membership.Permissions = ClonePermissions(invite.Permissions);
+            }
             if (!IsUsableBcryptHash(membership.PasswordHash) && IsUsableBcryptHash(inheritedHash))
                 membership.PasswordHash = inheritedHash;
             membership.IsActive = true;
@@ -520,7 +531,8 @@ public sealed class BusinessInvitationService(
         string? invitedBy,
         bool requiresPassword,
         DateTime now,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IReadOnlyList<string>? permissions = null)
     {
         var latestActive = await db.BusinessInvitations
             .Where(x => x.BusinessId == business.Id &&
@@ -553,6 +565,7 @@ public sealed class BusinessInvitationService(
             BusinessId = business.Id,
             Email = email,
             Role = role,
+            Permissions = SerializePermissions(permissions),
             TokenHash = Hash(rawToken),
             ExpiresAt = expiresAt,
             UsedAt = null,
@@ -647,6 +660,26 @@ public sealed class BusinessInvitationService(
         value.Length >= 50;
 
     private static string NormalizeEmail(string email) => email.Trim().ToLowerInvariant();
+
+    private static JsonDocument SerializePermissions(IReadOnlyList<string>? permissions) =>
+        JsonSerializer.SerializeToDocument(permissions ?? Array.Empty<string>());
+
+    private static JsonDocument ClonePermissions(JsonDocument? permissions) =>
+        JsonDocument.Parse(permissions?.RootElement.GetRawText() ?? "[]");
+
+    private static IReadOnlyList<string> ReadPermissions(JsonDocument? permissions)
+    {
+        if (permissions is null || permissions.RootElement.ValueKind != JsonValueKind.Array)
+            return Array.Empty<string>();
+
+        return permissions.RootElement
+            .EnumerateArray()
+            .Where(x => x.ValueKind == JsonValueKind.String)
+            .Select(x => x.GetString())
+            .Where(x => x is not null)
+            .Select(x => x!)
+            .ToArray();
+    }
 
     private static string Hash(string token)
     {
