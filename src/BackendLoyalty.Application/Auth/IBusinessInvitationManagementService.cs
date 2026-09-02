@@ -17,6 +17,12 @@ public enum InvitationManagementResult
 
 public interface IBusinessInvitationManagementService
 {
+    Task<bool> CanManageTeamAsync(
+        string userId,
+        string businessId,
+        string role,
+        CancellationToken cancellationToken);
+
     Task<(InvitationManagementResult Result, IReadOnlyList<TeamInvitationSummary> Items)> ListActiveAsync(
         string userId,
         string businessId,
