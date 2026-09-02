@@ -27,6 +27,21 @@ public sealed class ResendTransactionalEmailSender(
             cancellationToken);
     }
 
+    public Task<bool> SendAdminPasswordResetAsync(
+        string recipient,
+        string resetUrl,
+        CancellationToken cancellationToken)
+    {
+        var safeUrl = WebUtility.HtmlEncode(resetUrl);
+        return SendAsync(
+            recipient,
+            "Reset kata sandi akun POS/Staff",
+            $"<p>Halo,</p><p>Kami menerima permintaan reset kata sandi untuk akun POS/Staff Anda.</p><p><a href=\"{safeUrl}\">Klik di sini untuk reset kata sandi</a></p><p>Jika Anda tidak meminta ini, abaikan email ini.</p>",
+            $"Halo,\n\nKami menerima permintaan reset kata sandi untuk akun POS/Staff Anda.\nReset link: {resetUrl}\n\nJika Anda tidak meminta ini, abaikan email ini.",
+            "admin-password-reset",
+            cancellationToken);
+    }
+
     public Task<bool> SendBusinessInvitationAsync(
         string recipient,
         string businessName,
