@@ -45,4 +45,11 @@ public interface ITransactionalEmailSender
         string recipient,
         string resetUrl,
         CancellationToken cancellationToken);
+
+    Task<bool> SendBusinessInvitationAsync(
+        string recipient,
+        string businessName,
+        string role,
+        string invitationUrl,
+        CancellationToken cancellationToken);
 }
