@@ -62,8 +62,6 @@ public sealed class RefreshTokenSessionService(StandaloneAuthDbContext db) : IRe
 
         if (current.RevokedAt is not null)
         {
-            // A token that was already rotated and is presented again is a replay.
-            // Revoke the remaining active sessions in the same family.
             if (current.ReplacedBySessionId is not null)
             {
                 await db.AuthRefreshSessions
@@ -90,9 +88,6 @@ public sealed class RefreshTokenSessionService(StandaloneAuthDbContext db) : IRe
 
         var nextId = Guid.NewGuid();
 
-        // Insert the replacement first inside the same transaction. This is compatible
-        // with databases that still have a FK on replacedBySessionId and remains race-safe:
-        // a concurrent loser rolls this insert back when the conditional consume affects 0 rows.
         db.AuthRefreshSessions.Add(new AuthRefreshSession
         {
             Id = nextId,
@@ -146,6 +141,25 @@ public sealed class RefreshTokenSessionService(StandaloneAuthDbContext db) : IRe
                     .SetProperty(x => x.RevokeReason, reason),
                 cancellationToken);
         return affected == 1;
+    }
+
+    public Task<int> RevokeAllAsync(
+        string userId,
+        string authKind,
+        string reason,
+        CancellationToken cancellationToken)
+    {
+        var now = DateTime.UtcNow;
+        return db.AuthRefreshSessions
+            .Where(x =>
+                x.UserId == userId &&
+                x.AuthKind == authKind &&
+                x.RevokedAt == null)
+            .ExecuteUpdateAsync(
+                setters => setters
+                    .SetProperty(x => x.RevokedAt, now)
+                    .SetProperty(x => x.RevokeReason, reason),
+                cancellationToken);
     }
 
     private static string Hash(string token)
