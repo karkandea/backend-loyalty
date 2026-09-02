@@ -76,6 +76,7 @@ builder.Services.AddScoped<IRefreshTokenSessionService, RefreshTokenSessionServi
 builder.Services.AddScoped<IBusinessPasswordService, BusinessPasswordService>();
 builder.Services.AddScoped<IBusinessInvitationService, BusinessInvitationService>();
 builder.Services.AddScoped<IBusinessInvitationManagementService, BusinessInvitationManagementService>();
+builder.Services.AddScoped<IStandaloneInvitationIdentityService, StandaloneInvitationIdentityService>();
 builder.Services.AddHttpClient<ITransactionalEmailSender, ResendTransactionalEmailSender>();
 builder.Services.AddSingleton<ILoyaltyJwtTokenIssuer, LoyaltyJwtTokenIssuer>();
 
@@ -223,15 +224,15 @@ app.UseCors();
 app.UseAuthentication();
 app.UseRateLimiter();
 app.UseAuthorization();
-
 app.MapControllers();
+
 app.MapGet("/health", () => Results.Ok(new { status = "ok", service = "backend-loyalty" }));
-app.MapGet("/health/db", async (LoyaltyDbContext db, CancellationToken ct) =>
+app.MapGet("/health/db", async (LoyaltyDbContext db, CancellationToken cancellationToken) =>
 {
-    var canConnect = await db.Database.CanConnectAsync(ct);
+    var canConnect = await db.Database.CanConnectAsync(cancellationToken);
     return canConnect
         ? Results.Ok(new { status = "ok", database = "connected" })
-        : Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "Database unavailable");
+        : Results.Problem("Database connection failed.");
 });
 
 app.Run();
