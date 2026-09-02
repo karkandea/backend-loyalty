@@ -3,6 +3,7 @@ using BackendLoyalty.Api.Contracts;
 using BackendLoyalty.Application.Auth;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace BackendLoyalty.Api.Controllers;
 
@@ -10,10 +11,12 @@ namespace BackendLoyalty.Api.Controllers;
 [Route("api/business/team/invitations")]
 public sealed class BusinessInvitationsController(
     IBusinessInvitationService invitations,
+    IBusinessInvitationManagementService management,
     ITransactionalEmailSender emailSender,
     IConfiguration configuration) : ControllerBase
 {
     [Authorize]
+    [EnableRateLimiting("team-mutation")]
     [HttpPost]
     public async Task<IActionResult> Create(
         [FromBody] CreateTeamInvitationRequest request,
@@ -32,6 +35,13 @@ public sealed class BusinessInvitationsController(
             return StatusCode(
                 StatusCodes.Status403Forbidden,
                 ApiResponse<object>.Fail("FORBIDDEN", "Unauthorized"));
+        }
+
+        if (!await management.CanManageTeamAsync(userId, businessId, role, cancellationToken))
+        {
+            return StatusCode(
+                StatusCodes.Status403Forbidden,
+                ApiResponse<object>.Fail("FORBIDDEN", "Insufficient permissions."));
         }
 
         var issue = await invitations.CreateTeamInvitationAsync(
@@ -86,6 +96,7 @@ public sealed class BusinessInvitationsController(
     }
 
     [AllowAnonymous]
+    [EnableRateLimiting("auth-login")]
     [HttpPost("register")]
     public async Task<IActionResult> Register(
         [FromBody] RegisterBusinessInvitationRequest request,
@@ -115,6 +126,7 @@ public sealed class BusinessInvitationsController(
     }
 
     [Authorize]
+    [EnableRateLimiting("team-mutation")]
     [HttpPost("accept")]
     public async Task<IActionResult> Accept(
         [FromBody] AcceptBusinessInvitationRequest request,
