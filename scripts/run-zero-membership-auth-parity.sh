@@ -35,7 +35,42 @@ SQL
 count = src.count(old)
 if count != 1:
     raise SystemExit(f"ERROR: expected exactly one eligible-query line to patch, found {count}")
-Path(sys.argv[2]).write_text(src.replace(old, new))
+src = src.replace(old, new)
+
+lines = src.splitlines()
+out = []
+replaced_banned = 0
+replaced_unconfirmed = 0
+for line in lines:
+    if line.startswith('target_psql -q -v smoke_id="$SMOKE_ID" -c ') and '"bannedUntil"=now()+interval' in line:
+        out.extend([
+            'target_psql -q -v smoke_id="$SMOKE_ID" <<\'SQL\'',
+            'UPDATE "StandaloneAuthIdentity"',
+            'SET "bannedUntil" = now() + interval \'1 day\'',
+            'WHERE id = :\'smoke_id\'::uuid;',
+            'SQL',
+        ])
+        replaced_banned += 1
+        continue
+    if line.startswith('target_psql -q -v smoke_id="$SMOKE_ID" -c ') and '"emailConfirmedAt"=NULL' in line:
+        out.extend([
+            'target_psql -q -v smoke_id="$SMOKE_ID" <<\'SQL\'',
+            'UPDATE "StandaloneAuthIdentity"',
+            'SET "bannedUntil" = NULL,',
+            '    "emailConfirmedAt" = NULL',
+            'WHERE id = :\'smoke_id\'::uuid;',
+            'SQL',
+        ])
+        replaced_unconfirmed += 1
+        continue
+    out.append(line)
+
+if replaced_banned != 1 or replaced_unconfirmed != 1:
+    raise SystemExit(
+        f"ERROR: expected one banned and one unconfirmed update; got banned={replaced_banned} unconfirmed={replaced_unconfirmed}"
+    )
+
+Path(sys.argv[2]).write_text("\n".join(out) + "\n")
 PY
 
 chmod 700 "$TMP_SCRIPT"
