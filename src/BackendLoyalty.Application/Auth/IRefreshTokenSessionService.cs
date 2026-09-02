@@ -26,4 +26,10 @@ public interface IRefreshTokenSessionService
         string refreshToken,
         string reason,
         CancellationToken cancellationToken);
+
+    Task<int> RevokeAllAsync(
+        string userId,
+        string authKind,
+        string reason,
+        CancellationToken cancellationToken);
 }
