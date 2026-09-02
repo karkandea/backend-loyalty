@@ -1,4 +1,5 @@
 using System.Text;
+using System.Threading.RateLimiting;
 using BackendLoyalty.Api.Auth;
 using BackendLoyalty.Api.Contracts;
 using BackendLoyalty.Application.Auditing;
@@ -14,6 +15,7 @@ using BackendLoyalty.Infrastructure.Persistence;
 using BackendLoyalty.Infrastructure.Rewards;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 
@@ -111,6 +113,73 @@ builder.Services
 
 builder.Services.AddAuthorization();
 
+static string RateLimitPartitionKey(HttpContext context)
+{
+    var userId = context.User.FindFirst("sub")?.Value;
+    if (!string.IsNullOrWhiteSpace(userId))
+        return $"user:{userId}";
+
+    return $"ip:{context.Connection.RemoteIpAddress?.ToString() ?? "unknown"}";
+}
+
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.OnRejected = async (context, cancellationToken) =>
+    {
+        if (context.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter))
+            context.HttpContext.Response.Headers.RetryAfter = Math.Max(1, (int)Math.Ceiling(retryAfter.TotalSeconds)).ToString();
+
+        await context.HttpContext.Response.WriteAsJsonAsync(
+            ApiResponse<object>.Fail("TOO_MANY_REQUESTS", "Too many requests. Please try again later."),
+            cancellationToken);
+    };
+
+    options.AddPolicy("auth-login", httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            RateLimitPartitionKey(httpContext),
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 10,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+                AutoReplenishment = true,
+            }));
+
+    options.AddPolicy("signup", httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            RateLimitPartitionKey(httpContext),
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 5,
+                Window = TimeSpan.FromMinutes(10),
+                QueueLimit = 0,
+                AutoReplenishment = true,
+            }));
+
+    options.AddPolicy("email-action", httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            RateLimitPartitionKey(httpContext),
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 5,
+                Window = TimeSpan.FromMinutes(10),
+                QueueLimit = 0,
+                AutoReplenishment = true,
+            }));
+
+    options.AddPolicy("team-mutation", httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            RateLimitPartitionKey(httpContext),
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 20,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+                AutoReplenishment = true,
+            }));
+});
+
 var allowedOrigins = builder.Configuration
     .GetSection("Cors:AllowedOrigins")
     .GetChildren()
@@ -152,6 +221,7 @@ if (app.Environment.IsDevelopment())
 
 app.UseCors();
 app.UseAuthentication();
+app.UseRateLimiter();
 app.UseAuthorization();
 
 app.MapControllers();
