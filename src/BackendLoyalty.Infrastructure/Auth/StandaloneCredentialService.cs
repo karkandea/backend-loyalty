@@ -434,18 +434,9 @@ public sealed class StandaloneCredentialService(StandaloneAuthDbContext db) : IS
             if (shouldClose)
                 await connection.OpenAsync(cancellationToken);
 
-            var bridgeHash = await TryGetPasswordHashAsync(
-                connection,
-                "SELECT \"passwordHash\" FROM \"LegacyAuthUserPassword\" WHERE \"authUserId\" = @userId LIMIT 1",
-                userId,
-                cancellationToken);
-
-            if (IsUsableBcryptHash(bridgeHash))
-                return bridgeHash;
-
             return await TryGetPasswordHashAsync(
                 connection,
-                "SELECT encrypted_password FROM auth.users WHERE id::text = @userId LIMIT 1",
+                "SELECT \"passwordHash\" FROM \"LegacyAuthUserPassword\" WHERE \"authUserId\" = @userId LIMIT 1",
                 userId,
                 cancellationToken);
         }
