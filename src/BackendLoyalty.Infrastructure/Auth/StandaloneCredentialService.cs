@@ -226,6 +226,23 @@ public sealed class StandaloneCredentialService(StandaloneAuthDbContext db) : IS
             role);
     }
 
+    public async Task<int> CountBusinessMembershipsAsync(
+        string userId,
+        CancellationToken cancellationToken)
+    {
+        if (Guid.TryParse(userId, out var authUserGuid))
+        {
+            var normalizedAuthUserId = authUserGuid.ToString();
+            return await db.BusinessUsers.CountAsync(
+                x => x.IsActive && (x.Id == userId || x.AuthUserId == normalizedAuthUserId),
+                cancellationToken);
+        }
+
+        return await db.BusinessUsers.CountAsync(
+            x => x.IsActive && x.Id == userId,
+            cancellationToken);
+    }
+
     public async Task<bool> IsUserActiveAsync(
         string userId,
         string authKind,
