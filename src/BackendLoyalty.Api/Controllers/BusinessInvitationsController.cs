@@ -12,6 +12,7 @@ namespace BackendLoyalty.Api.Controllers;
 public sealed class BusinessInvitationsController(
     IBusinessInvitationService invitations,
     IBusinessInvitationManagementService management,
+    IBusinessPasswordService passwords,
     ITransactionalEmailSender emailSender,
     IConfiguration configuration) : ControllerBase
 {
@@ -42,6 +43,16 @@ public sealed class BusinessInvitationsController(
             return StatusCode(
                 StatusCodes.Status403Forbidden,
                 ApiResponse<object>.Fail("FORBIDDEN", "Insufficient permissions."));
+        }
+
+        var policy = await passwords.GetPasswordPolicyAsync(userId, cancellationToken);
+        if (policy.IsExpired)
+        {
+            return StatusCode(
+                StatusCodes.Status403Forbidden,
+                ApiResponse<object>.Fail(
+                    "FORBIDDEN",
+                    "For security, please set a password before inviting new team members."));
         }
 
         var issue = await invitations.CreateTeamInvitationAsync(
