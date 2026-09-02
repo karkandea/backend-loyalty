@@ -46,17 +46,19 @@ psql_exec() {
 
 cleanup() {
   set +e
-  if [[ -n "$FAMILY_ONE" || -n "$FAMILY_TWO" ]]; then
-    if [[ -n "$FAMILY_ONE" && -n "$FAMILY_TWO" ]]; then
-      psql_exec -v f1="$FAMILY_ONE" -v f2="$FAMILY_TWO" -c \
-        'DELETE FROM "AuthRefreshSession" WHERE "familyId" IN (:''f1''::uuid, :''f2''::uuid);' >/dev/null 2>&1
-    elif [[ -n "$FAMILY_ONE" ]]; then
-      psql_exec -v f1="$FAMILY_ONE" -c \
-        'DELETE FROM "AuthRefreshSession" WHERE "familyId" = :''f1''::uuid;' >/dev/null 2>&1
-    elif [[ -n "$FAMILY_TWO" ]]; then
-      psql_exec -v f2="$FAMILY_TWO" -c \
-        'DELETE FROM "AuthRefreshSession" WHERE "familyId" = :''f2''::uuid;' >/dev/null 2>&1
-    fi
+  if [[ -n "$FAMILY_ONE" && -n "$FAMILY_TWO" ]]; then
+    psql_exec -q -v f1="$FAMILY_ONE" -v f2="$FAMILY_TWO" >/dev/null 2>&1 <<'SQL'
+DELETE FROM "AuthRefreshSession"
+WHERE "familyId" IN (:'f1'::uuid, :'f2'::uuid);
+SQL
+  elif [[ -n "$FAMILY_ONE" ]]; then
+    psql_exec -q -v f1="$FAMILY_ONE" >/dev/null 2>&1 <<'SQL'
+DELETE FROM "AuthRefreshSession" WHERE "familyId" = :'f1'::uuid;
+SQL
+  elif [[ -n "$FAMILY_TWO" ]]; then
+    psql_exec -q -v f2="$FAMILY_TWO" >/dev/null 2>&1 <<'SQL'
+DELETE FROM "AuthRefreshSession" WHERE "familyId" = :'f2'::uuid;
+SQL
   fi
   rm -rf "$TMP_DIR"
 }
@@ -76,7 +78,10 @@ echo "BACKUP OK: $BACKUP"
 echo "==> [2/8] Applying persistent refresh-session schema..."
 psql_exec < scripts/add-refresh-session-schema.sql
 
-TABLE_OK="$(psql_exec -Atqc 'SELECT to_regclass('"'"'public."AuthRefreshSession"'"'"') IS NOT NULL')"
+TABLE_OK="$(psql_exec -qAt <<'SQL'
+SELECT to_regclass('public."AuthRefreshSession"') IS NOT NULL;
+SQL
+)"
 [[ "$TABLE_OK" == "t" ]] || { echo "ERROR: AuthRefreshSession table missing after schema apply" >&2; exit 1; }
 
 echo "==> [3/8] Building and restarting Loyalty API..."
@@ -95,15 +100,15 @@ for attempt in $(seq 1 30); do
 done
 
 echo "==> [4/8] Selecting isolated smoke-test identity..."
-IFS='|' read -r TEST_USER_ID TEST_ROLE TEST_BUSINESS_ID TEST_OUTLET_ID < <(
-  psql_exec -AtF '|' -c '
-    SELECT id, lower(role), "businessId", COALESCE("outletId", '''')
-    FROM "AdminUser"
-    WHERE "isActive" = true
-    ORDER BY "createdAt", id
-    LIMIT 1;
-  '
-)
+IDENTITY_ROW="$(psql_exec -qAtF '|' <<'SQL'
+SELECT id, lower(role), "businessId", COALESCE("outletId", '')
+FROM "AdminUser"
+WHERE "isActive" = true
+ORDER BY "createdAt", id
+LIMIT 1;
+SQL
+)"
+IFS='|' read -r TEST_USER_ID TEST_ROLE TEST_BUSINESS_ID TEST_OUTLET_ID <<< "$IDENTITY_ROW"
 [[ -n "$TEST_USER_ID" ]] || { echo "ERROR: no active AdminUser available for smoke test" >&2; exit 1; }
 
 make_refresh_token() {
@@ -140,7 +145,7 @@ insert_session() {
   local token="$1"
   local hash family
   hash="$(printf '%s' "$token" | sha256sum | awk '{print $1}')"
-  family="$(psql_exec -At \
+  family="$(psql_exec -qAt \
     -v token_hash="$hash" \
     -v user_id="$TEST_USER_ID" \
     -v role="$TEST_ROLE" \
@@ -225,7 +230,13 @@ STATUS="$(request '/api/auth/refresh' "$TOKEN_TWO_NEXT" "$TMP_DIR/after-logout.j
 echo "PASS: logout revoked the persisted refresh session."
 
 echo "==> [7/8] Verifying no raw JWTs are stored..."
-BAD_HASH_ROWS="$(psql_exec -Atqc 'SELECT count(*) FROM "AuthRefreshSession" WHERE length("tokenHash") <> 64 OR "tokenHash" LIKE ''eyJ%'';')"
+BAD_HASH_ROWS="$(psql_exec -qAt <<'SQL'
+SELECT count(*)
+FROM "AuthRefreshSession"
+WHERE length("tokenHash") <> 64
+   OR "tokenHash" LIKE 'eyJ%';
+SQL
+)"
 [[ "$BAD_HASH_ROWS" == "0" ]] || { echo "ERROR: refresh-session storage contains unexpected token representation" >&2; exit 1; }
 
 echo "==> [8/8] Final health checks..."
