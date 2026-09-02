@@ -10,6 +10,7 @@ public sealed class StandaloneAuthDbContext(DbContextOptions<StandaloneAuthDbCon
     public DbSet<BusinessUser> BusinessUsers => Set<BusinessUser>();
     public DbSet<AdminUser> AdminUsers => Set<AdminUser>();
     public DbSet<Outlet> Outlets => Set<Outlet>();
+    public DbSet<AuthRefreshSession> AuthRefreshSessions => Set<AuthRefreshSession>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -76,6 +77,30 @@ public sealed class StandaloneAuthDbContext(DbContextOptions<StandaloneAuthDbCon
             entity.Property(x => x.BusinessId).HasColumnName("businessId");
             entity.Property(x => x.Name).HasColumnName("name");
             entity.Property(x => x.IsActive).HasColumnName("isActive");
+        });
+
+        modelBuilder.Entity<AuthRefreshSession>(entity =>
+        {
+            entity.ToTable("AuthRefreshSession");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Id).HasColumnName("id");
+            entity.Property(x => x.UserId).HasColumnName("userId");
+            entity.Property(x => x.AuthKind).HasColumnName("authKind");
+            entity.Property(x => x.TokenHash).HasColumnName("tokenHash");
+            entity.Property(x => x.FamilyId).HasColumnName("familyId");
+            entity.Property(x => x.ParentSessionId).HasColumnName("parentSessionId");
+            entity.Property(x => x.Role).HasColumnName("role");
+            entity.Property(x => x.BusinessId).HasColumnName("businessId");
+            entity.Property(x => x.OutletId).HasColumnName("outletId");
+            entity.Property(x => x.ExpiresAt).HasColumnName("expiresAt");
+            entity.Property(x => x.RevokedAt).HasColumnName("revokedAt");
+            entity.Property(x => x.RevokeReason).HasColumnName("revokeReason");
+            entity.Property(x => x.ReplacedBySessionId).HasColumnName("replacedBySessionId");
+            entity.Property(x => x.CreatedAt).HasColumnName("createdAt");
+            entity.HasIndex(x => x.TokenHash).IsUnique();
+            entity.HasIndex(x => new { x.UserId, x.AuthKind });
+            entity.HasIndex(x => x.FamilyId);
+            entity.HasIndex(x => x.ExpiresAt);
         });
     }
 }
