@@ -1,5 +1,6 @@
 using System.Text.Json;
 using BackendLoyalty.Application.Auth;
+using BackendLoyalty.Domain.Entities;
 using BackendLoyalty.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 
@@ -95,7 +96,7 @@ public sealed class BusinessInvitationManagementService(StandaloneAuthDbContext 
             string.Equals(x.GetString(), "can_manage_team", StringComparison.Ordinal));
     }
 
-    private Task<List<Domain.Entities.BusinessUser>> ResolveRowsAsync(
+    private Task<List<BusinessUser>> ResolveRowsAsync(
         string userId,
         string businessId,
         CancellationToken cancellationToken)
