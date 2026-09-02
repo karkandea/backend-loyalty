@@ -2,6 +2,7 @@ using BackendLoyalty.Api.Contracts;
 using BackendLoyalty.Application.Auth;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 
 namespace BackendLoyalty.Api.Controllers;
@@ -18,6 +19,7 @@ public sealed class BusinessSignupController(
         "If the signup is still pending, you’ll receive a new verification link within a few minutes.";
 
     [AllowAnonymous]
+    [EnableRateLimiting("signup")]
     [HttpPost("signup")]
     public async Task<IActionResult> Signup(
         [FromBody] OwnerSignupApiRequest request,
@@ -72,6 +74,7 @@ public sealed class BusinessSignupController(
     }
 
     [AllowAnonymous]
+    [EnableRateLimiting("email-action")]
     [HttpPost("resend-verification")]
     public async Task<IActionResult> ResendVerification(
         [FromBody] ResendOwnerVerificationRequest request,
