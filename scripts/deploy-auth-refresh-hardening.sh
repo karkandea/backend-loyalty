@@ -11,7 +11,7 @@ API_CONTAINER="${API_CONTAINER:-backend-loyalty}"
 DB_USER="${DB_USER:-loyalty_app}"
 DB_NAME="${DB_NAME:-loyalty}"
 
-for command in docker curl python3 sha256sum; do
+for command in docker curl python3; do
   command -v "$command" >/dev/null 2>&1 || { echo "ERROR: missing command: $command" >&2; exit 1; }
 done
 
@@ -24,9 +24,6 @@ source "$ENV_FILE"
 set +a
 
 : "${LOYALTY_DB_PASSWORD:?LOYALTY_DB_PASSWORD is required}"
-: "${Jwt__Issuer:?Jwt__Issuer is required}"
-: "${Jwt__Audience:?Jwt__Audience is required}"
-: "${Jwt__SigningKey:?Jwt__SigningKey is required}"
 
 PORT="${LOYALTY_API_PORT:-5092}"
 BASE_URL="http://127.0.0.1:${PORT}"
@@ -34,8 +31,14 @@ STAMP="$(date -u +%Y%m%d-%H%M%S)"
 BACKUP="/root/loyalty-pre-refresh-hardening-${STAMP}.dump"
 TMP_DIR="$(mktemp -d /tmp/loyalty-refresh-smoke.XXXXXX)"
 chmod 700 "$TMP_DIR"
-FAMILY_ONE=""
-FAMILY_TWO=""
+
+# This password/hash pair exists only for the ephemeral smoke AdminUser below.
+# The fixture uses @example.invalid and is deleted by the EXIT trap.
+SMOKE_PASSWORD='SmokeOnly-Refresh-2026!'
+SMOKE_BCRYPT='$2y$10$uelGbUGlkEenIW0KuLdQhe48XrVAAP0TtBEsccu34TLv6q2koWYfu'
+SMOKE_USER_ID="refresh-smoke-${STAMP}"
+SMOKE_EMAIL="refresh-smoke-${STAMP}@example.invalid"
+FIXTURE_CREATED=0
 
 psql_exec() {
   docker exec \
@@ -45,26 +48,22 @@ psql_exec() {
 }
 
 cleanup() {
+  local rc=$?
   set +e
-  if [[ -n "$FAMILY_ONE" && -n "$FAMILY_TWO" ]]; then
-    psql_exec -q -v f1="$FAMILY_ONE" -v f2="$FAMILY_TWO" >/dev/null 2>&1 <<'SQL'
-DELETE FROM "AuthRefreshSession"
-WHERE "familyId" IN (:'f1'::uuid, :'f2'::uuid);
-SQL
-  elif [[ -n "$FAMILY_ONE" ]]; then
-    psql_exec -q -v f1="$FAMILY_ONE" >/dev/null 2>&1 <<'SQL'
-DELETE FROM "AuthRefreshSession" WHERE "familyId" = :'f1'::uuid;
-SQL
-  elif [[ -n "$FAMILY_TWO" ]]; then
-    psql_exec -q -v f2="$FAMILY_TWO" >/dev/null 2>&1 <<'SQL'
-DELETE FROM "AuthRefreshSession" WHERE "familyId" = :'f2'::uuid;
+
+  if [[ "$FIXTURE_CREATED" == "1" ]]; then
+    psql_exec -q -v smoke_id="$SMOKE_USER_ID" >/dev/null 2>&1 <<'SQL'
+DELETE FROM "AuthRefreshSession" WHERE "userId" = :'smoke_id';
+DELETE FROM "AdminUser" WHERE id = :'smoke_id';
 SQL
   fi
+
   rm -rf "$TMP_DIR"
+  exit "$rc"
 }
 trap cleanup EXIT
 
-echo "==> [1/8] Checking current database and creating safety backup..."
+echo "==> [1/9] Checking current database and creating safety backup..."
 docker inspect "$DB_CONTAINER" >/dev/null
 psql_exec -Atqc 'SELECT 1' >/dev/null
 
@@ -75,7 +74,7 @@ docker exec \
 test -s "$BACKUP"
 echo "BACKUP OK: $BACKUP"
 
-echo "==> [2/8] Applying persistent refresh-session schema..."
+echo "==> [2/9] Applying persistent refresh-session schema..."
 psql_exec < scripts/add-refresh-session-schema.sql
 
 TABLE_OK="$(psql_exec -qAt <<'SQL'
@@ -84,7 +83,7 @@ SQL
 )"
 [[ "$TABLE_OK" == "t" ]] || { echo "ERROR: AuthRefreshSession table missing after schema apply" >&2; exit 1; }
 
-echo "==> [3/8] Building and restarting Loyalty API..."
+echo "==> [3/9] Building and restarting Loyalty API..."
 docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --build api
 
 for attempt in $(seq 1 30); do
@@ -99,88 +98,67 @@ for attempt in $(seq 1 30); do
   sleep 2
 done
 
-echo "==> [4/8] Selecting isolated smoke-test identity..."
-IDENTITY_ROW="$(psql_exec -qAtF '|' <<'SQL'
-SELECT id, lower(role), "businessId", COALESCE("outletId", '')
-FROM "AdminUser"
-WHERE "isActive" = true
-ORDER BY "createdAt", id
+echo "==> [4/9] Cleaning stale smoke fixtures and creating isolated admin fixture..."
+psql_exec -q <<'SQL'
+DELETE FROM "AuthRefreshSession"
+WHERE "userId" IN (
+  SELECT id FROM "AdminUser" WHERE email LIKE 'refresh-smoke-%@example.invalid'
+);
+DELETE FROM "AdminUser" WHERE email LIKE 'refresh-smoke-%@example.invalid';
+SQL
+
+TARGET_ROW="$(psql_exec -qAtF '|' <<'SQL'
+SELECT o."businessId", o.id
+FROM "Outlet" o
+JOIN "Business" b ON b.id = o."businessId"
+WHERE o."isActive" = true
+  AND b."isActive" = true
+ORDER BY o."createdAt", o.id
 LIMIT 1;
 SQL
 )"
-IFS='|' read -r TEST_USER_ID TEST_ROLE TEST_BUSINESS_ID TEST_OUTLET_ID <<< "$IDENTITY_ROW"
-[[ -n "$TEST_USER_ID" ]] || { echo "ERROR: no active AdminUser available for smoke test" >&2; exit 1; }
-
-make_refresh_token() {
-  local jti="$1"
-  python3 - "$TEST_USER_ID" "$TEST_ROLE" "$TEST_BUSINESS_ID" "$TEST_OUTLET_ID" "$jti" <<'PY'
-import base64, hashlib, hmac, json, os, sys, time
-user_id, role, business_id, outlet_id, jti = sys.argv[1:]
-now = int(time.time())
-payload = {
-    "sub": user_id,
-    "auth_kind": "admin",
-    "role": role,
-    "business_id": business_id,
-    "token_type": "refresh",
-    "jti": jti,
-    "nbf": now - 1,
-    "exp": now + 600,
-    "iss": os.environ["Jwt__Issuer"],
-    "aud": os.environ["Jwt__Audience"],
-}
-if outlet_id:
-    payload["outlet_id"] = outlet_id
-header = {"alg": "HS256", "typ": "JWT"}
-def enc(value):
-    raw = json.dumps(value, separators=(",", ":")).encode()
-    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
-body = f"{enc(header)}.{enc(payload)}"
-sig = hmac.new(os.environ["Jwt__SigningKey"].encode(), body.encode(), hashlib.sha256).digest()
-print(body + "." + base64.urlsafe_b64encode(sig).rstrip(b"=").decode())
-PY
+IFS='|' read -r SMOKE_BUSINESS_ID SMOKE_OUTLET_ID <<< "$TARGET_ROW"
+[[ -n "$SMOKE_BUSINESS_ID" && -n "$SMOKE_OUTLET_ID" ]] || {
+  echo "ERROR: no active business/outlet pair available for smoke fixture" >&2
+  exit 1
 }
 
-insert_session() {
-  local token="$1"
-  local hash family
-  hash="$(printf '%s' "$token" | sha256sum | awk '{print $1}')"
-  family="$(psql_exec -qAt \
-    -v token_hash="$hash" \
-    -v user_id="$TEST_USER_ID" \
-    -v role="$TEST_ROLE" \
-    -v business_id="$TEST_BUSINESS_ID" \
-    -v outlet_id="$TEST_OUTLET_ID" <<'SQL'
-INSERT INTO "AuthRefreshSession" (
-  id, "userId", "authKind", "tokenHash", "familyId", "parentSessionId",
-  role, "businessId", "outletId", "expiresAt", "revokedAt", "revokeReason",
-  "replacedBySessionId", "createdAt"
+psql_exec -q \
+  -v smoke_id="$SMOKE_USER_ID" \
+  -v business_id="$SMOKE_BUSINESS_ID" \
+  -v outlet_id="$SMOKE_OUTLET_ID" \
+  -v smoke_email="$SMOKE_EMAIL" \
+  -v smoke_hash="$SMOKE_BCRYPT" <<'SQL'
+INSERT INTO "AdminUser" (
+  id, "businessId", "outletId", email, "passwordHash", "fullName", role,
+  "isActive", "lastLoginAt", "createdAt", "updatedAt"
 )
 VALUES (
-  extensions.uuid_generate_v4(), :'user_id', 'admin', :'token_hash', extensions.uuid_generate_v4(), NULL,
-  NULLIF(:'role',''), NULLIF(:'business_id',''), NULLIF(:'outlet_id',''),
-  now() + interval '10 minutes', NULL, NULL, NULL, now()
-)
-RETURNING "familyId";
+  :'smoke_id', :'business_id', :'outlet_id', :'smoke_email', :'smoke_hash',
+  'Refresh Smoke Fixture', 'STAFF', true, NULL, now(), now()
+);
 SQL
-)"
-  printf '%s' "$family"
-}
+FIXTURE_CREATED=1
 
-write_body() {
-  local token="$1" file="$2"
-  TOKEN="$token" python3 - "$file" <<'PY'
+write_json() {
+  local mode="$1" file="$2" value1="$3" value2="${4:-}"
+  MODE="$mode" VALUE1="$value1" VALUE2="$value2" python3 - "$file" <<'PY'
 import json, os, sys
+mode = os.environ["MODE"]
+if mode == "login":
+    data = {"email": os.environ["VALUE1"], "password": os.environ["VALUE2"]}
+elif mode == "refresh":
+    data = {"refreshToken": os.environ["VALUE1"]}
+else:
+    raise SystemExit("unknown JSON mode")
 with open(sys.argv[1], "w", encoding="utf-8") as f:
-    json.dump({"refreshToken": os.environ["TOKEN"]}, f)
+    json.dump(data, f)
 PY
   chmod 600 "$file"
 }
 
-request() {
-  local endpoint="$1" token="$2" output="$3"
-  local body="${output}.request"
-  write_body "$token" "$body"
+post_file() {
+  local endpoint="$1" body="$2" output="$3"
   curl --silent --show-error -o "$output" -w '%{http_code}' \
     -H 'Content-Type: application/json' \
     --data-binary "@$body" \
@@ -199,52 +177,111 @@ print(value)
 PY
 }
 
-echo "==> [5/8] Testing rotation + replay detection..."
-TOKEN_ONE="$(make_refresh_token "smoke-rotation-${STAMP}")"
-FAMILY_ONE="$(insert_session "$TOKEN_ONE")"
-STATUS="$(request '/api/auth/refresh' "$TOKEN_ONE" "$TMP_DIR/refresh1.json")"
-[[ "$STATUS" == "200" ]] || { echo "ERROR: first refresh expected 200, got $STATUS" >&2; cat "$TMP_DIR/refresh1.json" >&2; exit 1; }
-TOKEN_ONE_NEXT="$(extract_refresh_token "$TMP_DIR/refresh1.json")"
+login_fixture() {
+  local prefix="$1"
+  local body="$TMP_DIR/${prefix}-login.request.json"
+  local output="$TMP_DIR/${prefix}-login.response.json"
+  local status
+  write_json login "$body" "$SMOKE_EMAIL" "$SMOKE_PASSWORD"
+  status="$(post_file '/api/admin/auth/login' "$body" "$output")"
+  if [[ "$status" != "200" ]]; then
+    echo "ERROR: smoke admin login expected 200, got $status" >&2
+    cat "$output" >&2
+    return 1
+  fi
+  extract_refresh_token "$output"
+}
 
-STATUS="$(request '/api/auth/refresh' "$TOKEN_ONE" "$TMP_DIR/replay-old.json")"
-[[ "$STATUS" == "401" ]] || { echo "ERROR: replayed old refresh expected 401, got $STATUS" >&2; cat "$TMP_DIR/replay-old.json" >&2; exit 1; }
+request_refresh_endpoint() {
+  local endpoint="$1" token="$2" output="$3"
+  local body="${output}.request.json"
+  write_json refresh "$body" "$token"
+  post_file "$endpoint" "$body" "$output"
+}
 
-STATUS="$(request '/api/auth/refresh' "$TOKEN_ONE_NEXT" "$TMP_DIR/family-revoked.json")"
-[[ "$STATUS" == "401" ]] || { echo "ERROR: refresh family should be revoked after replay; expected 401, got $STATUS" >&2; cat "$TMP_DIR/family-revoked.json" >&2; exit 1; }
-
-echo "PASS: replay detection revoked the token family."
-
-echo "==> [6/8] Testing normal rotate -> logout -> reject flow..."
-TOKEN_TWO="$(make_refresh_token "smoke-logout-${STAMP}")"
-FAMILY_TWO="$(insert_session "$TOKEN_TWO")"
-STATUS="$(request '/api/auth/refresh' "$TOKEN_TWO" "$TMP_DIR/refresh2.json")"
-[[ "$STATUS" == "200" ]] || { echo "ERROR: second refresh expected 200, got $STATUS" >&2; cat "$TMP_DIR/refresh2.json" >&2; exit 1; }
-TOKEN_TWO_NEXT="$(extract_refresh_token "$TMP_DIR/refresh2.json")"
-
-STATUS="$(request '/api/auth/logout' "$TOKEN_TWO_NEXT" "$TMP_DIR/logout.json")"
-[[ "$STATUS" == "200" ]] || { echo "ERROR: logout expected 200, got $STATUS" >&2; cat "$TMP_DIR/logout.json" >&2; exit 1; }
-
-STATUS="$(request '/api/auth/refresh' "$TOKEN_TWO_NEXT" "$TMP_DIR/after-logout.json")"
-[[ "$STATUS" == "401" ]] || { echo "ERROR: refresh after logout expected 401, got $STATUS" >&2; cat "$TMP_DIR/after-logout.json" >&2; exit 1; }
-
-echo "PASS: logout revoked the persisted refresh session."
-
-echo "==> [7/8] Verifying no raw JWTs are stored..."
-BAD_HASH_ROWS="$(psql_exec -qAt <<'SQL'
-SELECT count(*)
-FROM "AuthRefreshSession"
-WHERE length("tokenHash") <> 64
-   OR "tokenHash" LIKE 'eyJ%';
+echo "==> [5/9] Testing real admin login + persisted refresh registration..."
+TOKEN_ONE="$(login_fixture 'rotation')"
+SESSION_COUNT="$(psql_exec -qAt -v smoke_id="$SMOKE_USER_ID" <<'SQL'
+SELECT count(*) FROM "AuthRefreshSession"
+WHERE "userId" = :'smoke_id'
+  AND "authKind" = 'admin'
+  AND "revokedAt" IS NULL;
 SQL
 )"
-[[ "$BAD_HASH_ROWS" == "0" ]] || { echo "ERROR: refresh-session storage contains unexpected token representation" >&2; exit 1; }
+[[ "$SESSION_COUNT" == "1" ]] || {
+  echo "ERROR: login should register exactly 1 active refresh session, found $SESSION_COUNT" >&2
+  exit 1
+}
+echo "PASS: real admin login registered a persisted refresh session."
 
-echo "==> [8/8] Final health checks..."
+echo "==> [6/9] Testing rotation + replay-family revocation..."
+STATUS="$(request_refresh_endpoint '/api/auth/refresh' "$TOKEN_ONE" "$TMP_DIR/refresh1.json")"
+[[ "$STATUS" == "200" ]] || {
+  echo "ERROR: first refresh expected 200, got $STATUS" >&2
+  cat "$TMP_DIR/refresh1.json" >&2
+  exit 1
+}
+TOKEN_ONE_NEXT="$(extract_refresh_token "$TMP_DIR/refresh1.json")"
+
+STATUS="$(request_refresh_endpoint '/api/auth/refresh' "$TOKEN_ONE" "$TMP_DIR/replay-old.json")"
+[[ "$STATUS" == "401" ]] || {
+  echo "ERROR: replayed old refresh expected 401, got $STATUS" >&2
+  cat "$TMP_DIR/replay-old.json" >&2
+  exit 1
+}
+
+STATUS="$(request_refresh_endpoint '/api/auth/refresh' "$TOKEN_ONE_NEXT" "$TMP_DIR/family-revoked.json")"
+[[ "$STATUS" == "401" ]] || {
+  echo "ERROR: refresh family should be revoked after replay; expected 401, got $STATUS" >&2
+  cat "$TMP_DIR/family-revoked.json" >&2
+  exit 1
+}
+echo "PASS: replay detection revoked the replacement token family."
+
+echo "==> [7/9] Testing fresh login -> rotate -> logout -> reject..."
+TOKEN_TWO="$(login_fixture 'logout')"
+STATUS="$(request_refresh_endpoint '/api/auth/refresh' "$TOKEN_TWO" "$TMP_DIR/refresh2.json")"
+[[ "$STATUS" == "200" ]] || {
+  echo "ERROR: second refresh expected 200, got $STATUS" >&2
+  cat "$TMP_DIR/refresh2.json" >&2
+  exit 1
+}
+TOKEN_TWO_NEXT="$(extract_refresh_token "$TMP_DIR/refresh2.json")"
+
+STATUS="$(request_refresh_endpoint '/api/auth/logout' "$TOKEN_TWO_NEXT" "$TMP_DIR/logout.json")"
+[[ "$STATUS" == "200" ]] || {
+  echo "ERROR: logout expected 200, got $STATUS" >&2
+  cat "$TMP_DIR/logout.json" >&2
+  exit 1
+}
+
+STATUS="$(request_refresh_endpoint '/api/auth/refresh' "$TOKEN_TWO_NEXT" "$TMP_DIR/after-logout.json")"
+[[ "$STATUS" == "401" ]] || {
+  echo "ERROR: refresh after logout expected 401, got $STATUS" >&2
+  cat "$TMP_DIR/after-logout.json" >&2
+  exit 1
+}
+echo "PASS: logout revoked the persisted refresh session."
+
+echo "==> [8/9] Verifying only token hashes are persisted..."
+BAD_HASH_ROWS="$(psql_exec -qAt -v smoke_id="$SMOKE_USER_ID" <<'SQL'
+SELECT count(*)
+FROM "AuthRefreshSession"
+WHERE "userId" = :'smoke_id'
+  AND (length("tokenHash") <> 64 OR "tokenHash" LIKE 'eyJ%');
+SQL
+)"
+[[ "$BAD_HASH_ROWS" == "0" ]] || {
+  echo "ERROR: refresh-session storage contains unexpected token representation" >&2
+  exit 1
+}
+
+echo "==> [9/9] Final health checks..."
 curl --fail --show-error --silent "$BASE_URL/health"
 echo
 curl --fail --show-error --silent "$BASE_URL/health/db"
 echo
 
 echo
-echo "PASS: persistent refresh-token rotation/revocation deployed and smoke-tested."
+echo "PASS: persistent refresh-token rotation/revocation deployed and smoke-tested through real login."
 echo "Backup: $BACKUP"
