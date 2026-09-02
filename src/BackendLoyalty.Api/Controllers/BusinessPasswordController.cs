@@ -83,6 +83,61 @@ public sealed class BusinessPasswordController(
     }
 
     [Authorize]
+    [HttpGet("password-policy")]
+    public async Task<IActionResult> PasswordPolicy(CancellationToken cancellationToken)
+    {
+        var userId = LoyaltyClaims.UserId(User);
+        var authKind = LoyaltyClaims.AuthKind(User);
+        if (string.IsNullOrWhiteSpace(userId) || authKind != "business")
+            return Unauthorized(ApiResponse<object>.Fail("UNAUTHORIZED", "Unauthorized"));
+
+        var policy = await passwords.GetPasswordPolicyAsync(userId, cancellationToken);
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            requiresPassword = policy.RequiresPassword,
+            graceExpiresAt = policy.GraceExpiresAt,
+            passwordSetAt = policy.PasswordSetAt,
+            isExpired = policy.IsExpired,
+        }));
+    }
+
+    [Authorize]
+    [EnableRateLimiting("email-action")]
+    [HttpPost("set-password")]
+    public async Task<IActionResult> SetPassword(
+        [FromBody] SetPasswordRequest request,
+        CancellationToken cancellationToken)
+    {
+        var userId = LoyaltyClaims.UserId(User);
+        var authKind = LoyaltyClaims.AuthKind(User);
+        var role = LoyaltyClaims.Role(User)?.Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(userId) ||
+            authKind != "business" ||
+            role is not ("owner" or "admin" or "staff"))
+        {
+            return Unauthorized(ApiResponse<object>.Fail("UNAUTHORIZED", "Unauthorized"));
+        }
+
+        var result = await passwords.SetRequiredPasswordAsync(
+            userId,
+            request.NewPassword,
+            cancellationToken);
+
+        return result switch
+        {
+            RequiredPasswordSetResult.Success => Ok(ApiResponse<object>.Ok(new
+            {
+                message = "Kata sandi berhasil diubah.",
+            })),
+            RequiredPasswordSetResult.AlreadySet => Ok(ApiResponse<object>.Ok(new
+            {
+                message = "Kata sandi sudah diatur sebelumnya.",
+            })),
+            _ => Unauthorized(ApiResponse<object>.Fail("UNAUTHORIZED", "Unauthorized")),
+        };
+    }
+
+    [Authorize]
     [EnableRateLimiting("email-action")]
     [HttpPost("update-password")]
     public async Task<IActionResult> UpdatePassword(
