@@ -71,6 +71,8 @@ builder.Services.AddScoped<IMemberRewardTokenService, MemberRewardTokenService>(
 builder.Services.AddScoped<IAuditLogWriter, AuditLogWriter>();
 builder.Services.AddScoped<IStandaloneCredentialService, StandaloneCredentialService>();
 builder.Services.AddScoped<IRefreshTokenSessionService, RefreshTokenSessionService>();
+builder.Services.AddScoped<IBusinessPasswordService, BusinessPasswordService>();
+builder.Services.AddHttpClient<ITransactionalEmailSender, ResendTransactionalEmailSender>();
 builder.Services.AddSingleton<ILoyaltyJwtTokenIssuer, LoyaltyJwtTokenIssuer>();
 
 builder.Services
