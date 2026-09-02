@@ -15,6 +15,11 @@ public sealed record ActiveBusinessRequest(
 
 public sealed record ForgotPasswordRequest(string? Email);
 
+public sealed record AdminForgotPasswordRequest(
+    [Required, EmailAddress] string Email,
+    string? BusinessId,
+    string? BusinessSlug);
+
 public sealed record ResetPasswordRequest(
     [Required, MinLength(8)] string Token,
     [Required, MinLength(8), MaxLength(128)] string NewPassword);
