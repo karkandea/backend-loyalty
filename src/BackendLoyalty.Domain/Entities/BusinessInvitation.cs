@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace BackendLoyalty.Domain.Entities;
 
 public sealed class BusinessInvitation
@@ -6,6 +8,7 @@ public sealed class BusinessInvitation
     public string BusinessId { get; set; } = string.Empty;
     public string Email { get; set; } = string.Empty;
     public string Role { get; set; } = string.Empty;
+    public JsonDocument? Permissions { get; set; }
     public string TokenHash { get; set; } = string.Empty;
     public DateTime ExpiresAt { get; set; }
     public DateTime? UsedAt { get; set; }
