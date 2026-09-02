@@ -26,7 +26,9 @@ public sealed class BusinessAuthController(
 
             var membershipCount = profile.Memberships.Count;
             var selected = membershipCount == 1 ? profile.Memberships[0] : null;
-            var role = selected?.Role ?? profile.Memberships[0].Role;
+            var role = membershipCount > 0
+                ? selected?.Role ?? profile.Memberships[0].Role
+                : null;
 
             var tokens = tokenIssuer.Issue(new LoyaltyTokenContext(
                 profile.UserId,
@@ -42,7 +44,7 @@ public sealed class BusinessAuthController(
                 businessUserId = selected?.BusinessUserId,
                 businessId = selected?.BusinessId,
                 businessName = selected?.BusinessName,
-                role = role.ToUpperInvariant(),
+                role = role?.ToUpperInvariant(),
                 membershipCount,
                 accessToken = tokens.AccessToken,
                 refreshToken = tokens.RefreshToken,
@@ -82,6 +84,10 @@ public sealed class BusinessAuthController(
             return StatusCode(StatusCodes.Status403Forbidden,
                 ApiResponse<object>.Fail("FORBIDDEN", "No access to this business"));
 
+        var membershipCount = await credentialService.CountBusinessMembershipsAsync(
+            accessUserId,
+            cancellationToken);
+
         var tokens = tokenIssuer.Issue(new LoyaltyTokenContext(
             accessUserId,
             "business",
@@ -89,13 +95,14 @@ public sealed class BusinessAuthController(
             membership.BusinessId,
             null));
 
-        SetAuthCookies(tokens, null, membership.BusinessId);
+        SetAuthCookies(tokens, membershipCount, membership.BusinessId);
 
         return Ok(ApiResponse<object>.Ok(new
         {
             businessId = membership.BusinessId,
             businessName = membership.BusinessName,
             slug = membership.BusinessSlug,
+            membershipCount,
             accessToken = tokens.AccessToken,
             refreshToken = tokens.RefreshToken,
             expiresAt = new DateTimeOffset(tokens.AccessExpiresAt).ToUnixTimeSeconds(),
