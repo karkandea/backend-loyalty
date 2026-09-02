@@ -29,7 +29,7 @@ public sealed class BusinessAuthController(
             var selected = membershipCount == 1 ? profile.Memberships[0] : null;
             var role = membershipCount > 0
                 ? selected?.Role ?? profile.Memberships[0].Role
-                : null;
+                : profile.IdentityRole;
 
             var context = new LoyaltyTokenContext(
                 profile.UserId,
