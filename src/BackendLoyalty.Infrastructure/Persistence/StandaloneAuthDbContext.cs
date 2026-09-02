@@ -76,6 +76,9 @@ public sealed class StandaloneAuthDbContext(DbContextOptions<StandaloneAuthDbCon
             entity.Property(x => x.BusinessId).HasColumnName("businessId");
             entity.Property(x => x.Email).HasColumnName("email");
             entity.Property(x => x.Role).HasColumnName("role");
+            entity.Property(x => x.Permissions)
+                .HasColumnName("permissions")
+                .HasColumnType("jsonb");
             entity.Property(x => x.TokenHash).HasColumnName("tokenHash");
             entity.Property(x => x.ExpiresAt).HasColumnName("expiresAt");
             entity.Property(x => x.UsedAt).HasColumnName("usedAt");
