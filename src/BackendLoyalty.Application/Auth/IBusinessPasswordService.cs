@@ -6,6 +6,12 @@ public sealed record PasswordResetIssue(
     string RawToken,
     DateTime ExpiresAt);
 
+public sealed record PasswordPolicyStatus(
+    bool RequiresPassword,
+    DateTime? GraceExpiresAt,
+    DateTime? PasswordSetAt,
+    bool IsExpired);
+
 public enum PasswordResetResult
 {
     Success,
@@ -16,6 +22,13 @@ public enum PasswordUpdateResult
 {
     Success,
     InvalidCurrentPassword,
+    UserNotFound,
+}
+
+public enum RequiredPasswordSetResult
+{
+    Success,
+    AlreadySet,
     UserNotFound,
 }
 
@@ -35,6 +48,15 @@ public interface IBusinessPasswordService
     Task<PasswordUpdateResult> UpdatePasswordAsync(
         string userId,
         string currentPassword,
+        string newPassword,
+        CancellationToken cancellationToken);
+
+    Task<PasswordPolicyStatus> GetPasswordPolicyAsync(
+        string userId,
+        CancellationToken cancellationToken);
+
+    Task<RequiredPasswordSetResult> SetRequiredPasswordAsync(
+        string userId,
         string newPassword,
         CancellationToken cancellationToken);
 }
