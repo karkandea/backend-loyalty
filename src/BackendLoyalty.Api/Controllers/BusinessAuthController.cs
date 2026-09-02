@@ -10,7 +10,8 @@ namespace BackendLoyalty.Api.Controllers;
 [Route("api/business/auth")]
 public sealed class BusinessAuthController(
     IStandaloneCredentialService credentialService,
-    ILoyaltyJwtTokenIssuer tokenIssuer) : ControllerBase
+    ILoyaltyJwtTokenIssuer tokenIssuer,
+    IRefreshTokenSessionService refreshSessions) : ControllerBase
 {
     [HttpPost("login")]
     public async Task<IActionResult> Login(
@@ -30,12 +31,19 @@ public sealed class BusinessAuthController(
                 ? selected?.Role ?? profile.Memberships[0].Role
                 : null;
 
-            var tokens = tokenIssuer.Issue(new LoyaltyTokenContext(
+            var context = new LoyaltyTokenContext(
                 profile.UserId,
                 "business",
                 role,
                 selected?.BusinessId,
-                null));
+                null);
+            var tokens = tokenIssuer.Issue(context);
+
+            await refreshSessions.RegisterAsync(
+                tokens.RefreshToken,
+                tokens.RefreshExpiresAt,
+                ToRefreshContext(context),
+                cancellationToken);
 
             SetAuthCookies(tokens, membershipCount, selected?.BusinessId);
 
@@ -88,12 +96,23 @@ public sealed class BusinessAuthController(
             accessUserId,
             cancellationToken);
 
-        var tokens = tokenIssuer.Issue(new LoyaltyTokenContext(
+        var context = new LoyaltyTokenContext(
             accessUserId,
             "business",
             membership.Role,
             membership.BusinessId,
-            null));
+            null);
+        var tokens = tokenIssuer.Issue(context);
+
+        var rotated = await refreshSessions.RotateAsync(
+            request.RefreshToken,
+            tokens.RefreshToken,
+            tokens.RefreshExpiresAt,
+            ToRefreshContext(context),
+            cancellationToken);
+
+        if (!rotated)
+            return Unauthorized(ApiResponse<object>.Fail("UNAUTHORIZED", "Invalid or already used refresh token"));
 
         SetAuthCookies(tokens, membershipCount, membership.BusinessId);
 
@@ -108,6 +127,9 @@ public sealed class BusinessAuthController(
             expiresAt = new DateTimeOffset(tokens.AccessExpiresAt).ToUnixTimeSeconds(),
         }));
     }
+
+    private static RefreshSessionContext ToRefreshContext(LoyaltyTokenContext context) =>
+        new(context.UserId, context.AuthKind, context.Role, context.BusinessId, context.OutletId);
 
     private void SetAuthCookies(
         LoyaltyTokenPair tokens,
