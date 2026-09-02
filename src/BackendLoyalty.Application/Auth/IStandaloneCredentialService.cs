@@ -17,6 +17,10 @@ public interface IStandaloneCredentialService
         string businessId,
         CancellationToken cancellationToken);
 
+    Task<int> CountBusinessMembershipsAsync(
+        string userId,
+        CancellationToken cancellationToken);
+
     Task<bool> IsUserActiveAsync(
         string userId,
         string authKind,
