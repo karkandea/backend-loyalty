@@ -18,7 +18,8 @@ public sealed record BusinessMembership(
 
 public sealed record BusinessLoginProfile(
     string UserId,
-    IReadOnlyList<BusinessMembership> Memberships);
+    IReadOnlyList<BusinessMembership> Memberships,
+    string? IdentityRole = null);
 
 public enum CredentialFailureReason
 {
