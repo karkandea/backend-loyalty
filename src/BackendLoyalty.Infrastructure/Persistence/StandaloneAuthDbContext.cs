@@ -8,6 +8,7 @@ public sealed class StandaloneAuthDbContext(DbContextOptions<StandaloneAuthDbCon
 {
     public DbSet<Business> Businesses => Set<Business>();
     public DbSet<BusinessUser> BusinessUsers => Set<BusinessUser>();
+    public DbSet<BusinessInvitation> BusinessInvitations => Set<BusinessInvitation>();
     public DbSet<AdminUser> AdminUsers => Set<AdminUser>();
     public DbSet<Outlet> Outlets => Set<Outlet>();
     public DbSet<AuthRefreshSession> AuthRefreshSessions => Set<AuthRefreshSession>();
@@ -26,7 +27,11 @@ public sealed class StandaloneAuthDbContext(DbContextOptions<StandaloneAuthDbCon
             entity.Property(x => x.Id).HasColumnName("id");
             entity.Property(x => x.Name).HasColumnName("name");
             entity.Property(x => x.Slug).HasColumnName("slug");
+            entity.Property(x => x.Tier).HasColumnName("tier");
             entity.Property(x => x.IsActive).HasColumnName("isActive");
+            entity.Property(x => x.CreatedAt).HasColumnName("createdAt");
+            entity.Property(x => x.UpdatedAt).HasColumnName("updatedAt");
+            entity.HasIndex(x => x.Slug).IsUnique();
         });
 
         modelBuilder.Entity<BusinessUser>(entity =>
@@ -49,6 +54,27 @@ public sealed class StandaloneAuthDbContext(DbContextOptions<StandaloneAuthDbCon
             entity.Property(x => x.UpdatedAt).HasColumnName("updatedAt");
             entity.HasIndex(x => new { x.BusinessId, x.Email }).IsUnique();
             entity.HasIndex(x => x.AuthUserId);
+        });
+
+        modelBuilder.Entity<BusinessInvitation>(entity =>
+        {
+            entity.ToTable("BusinessInvitation");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Id).HasColumnName("id");
+            entity.Property(x => x.BusinessId).HasColumnName("businessId");
+            entity.Property(x => x.Email).HasColumnName("email");
+            entity.Property(x => x.Role).HasColumnName("role");
+            entity.Property(x => x.TokenHash).HasColumnName("tokenHash");
+            entity.Property(x => x.ExpiresAt).HasColumnName("expiresAt");
+            entity.Property(x => x.UsedAt).HasColumnName("usedAt");
+            entity.Property(x => x.RevokedAt).HasColumnName("revokedAt");
+            entity.Property(x => x.InvitedBy).HasColumnName("invitedBy");
+            entity.Property(x => x.RequiresPassword).HasColumnName("requiresPassword");
+            entity.Property(x => x.CreatedAt).HasColumnName("createdAt");
+            entity.Property(x => x.UpdatedAt).HasColumnName("updatedAt");
+            entity.HasIndex(x => x.TokenHash).IsUnique();
+            entity.HasIndex(x => x.BusinessId);
+            entity.HasIndex(x => x.Email);
         });
 
         modelBuilder.Entity<AdminUser>(entity =>
