@@ -74,6 +74,7 @@ builder.Services.AddScoped<IAuditLogWriter, AuditLogWriter>();
 builder.Services.AddScoped<IStandaloneCredentialService, StandaloneCredentialService>();
 builder.Services.AddScoped<IRefreshTokenSessionService, RefreshTokenSessionService>();
 builder.Services.AddScoped<IBusinessPasswordService, BusinessPasswordService>();
+builder.Services.AddScoped<IAdminPasswordService, AdminPasswordService>();
 builder.Services.AddScoped<IBusinessInvitationService, BusinessInvitationService>();
 builder.Services.AddScoped<IBusinessInvitationManagementService, BusinessInvitationManagementService>();
 builder.Services.AddScoped<IStandaloneInvitationIdentityService, StandaloneInvitationIdentityService>();
