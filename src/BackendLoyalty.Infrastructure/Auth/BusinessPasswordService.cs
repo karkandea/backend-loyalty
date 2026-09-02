@@ -1,4 +1,5 @@
 using System.Data;
+using System.Data.Common;
 using System.Security.Cryptography;
 using System.Text;
 using BackendLoyalty.Application.Auth;
@@ -131,6 +132,7 @@ public sealed class BusinessPasswordService(
 
         await db.SaveChangesAsync(cancellationToken);
         await DeleteLegacyBridgeAsync(reset.UserId, cancellationToken);
+        await MarkPasswordSetAsync(reset.UserId, now, cancellationToken);
         await refreshSessions.RevokeAllAsync(
             reset.UserId,
             "business",
@@ -184,6 +186,7 @@ public sealed class BusinessPasswordService(
 
         await db.SaveChangesAsync(cancellationToken);
         await DeleteLegacyBridgeAsync(userId, cancellationToken);
+        await MarkPasswordSetAsync(userId, now, cancellationToken);
         await refreshSessions.RevokeAllAsync(
             userId,
             "business",
@@ -191,6 +194,103 @@ public sealed class BusinessPasswordService(
             cancellationToken);
 
         return PasswordUpdateResult.Success;
+    }
+
+    public async Task<PasswordPolicyStatus> GetPasswordPolicyAsync(
+        string userId,
+        CancellationToken cancellationToken)
+    {
+        var connection = db.Database.GetDbConnection();
+        var shouldClose = connection.State != ConnectionState.Open;
+
+        try
+        {
+            if (shouldClose)
+                await connection.OpenAsync(cancellationToken);
+
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT "requiresPassword", "graceExpiresAt", "passwordSetAt"
+                FROM "AuthPasswordPolicy"
+                WHERE "authUserId" = @userId
+                LIMIT 1
+                """;
+            AddParameter(command, "userId", userId);
+
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            if (!await reader.ReadAsync(cancellationToken))
+                return new PasswordPolicyStatus(false, null, null, false);
+
+            var requiresPassword = reader.GetBoolean(0);
+            var graceExpiresAt = reader.IsDBNull(1) ? null : reader.GetFieldValue<DateTime>(1);
+            var passwordSetAt = reader.IsDBNull(2) ? null : reader.GetFieldValue<DateTime>(2);
+            var isExpired = requiresPassword && graceExpiresAt is not null && graceExpiresAt <= DateTime.UtcNow;
+
+            return new PasswordPolicyStatus(
+                requiresPassword,
+                graceExpiresAt,
+                passwordSetAt,
+                isExpired);
+        }
+        finally
+        {
+            if (shouldClose && connection.State == ConnectionState.Open)
+                await connection.CloseAsync();
+        }
+    }
+
+    public async Task<RequiredPasswordSetResult> SetRequiredPasswordAsync(
+        string userId,
+        string newPassword,
+        CancellationToken cancellationToken)
+    {
+        var policy = await GetPasswordPolicyAsync(userId, cancellationToken);
+        if (!policy.RequiresPassword)
+            return RequiredPasswordSetResult.AlreadySet;
+
+        var rows = await ResolveRowsAsync(userId, cancellationToken);
+        var standaloneEmail = rows.Count == 0
+            ? await GetActiveStandaloneIdentityEmailAsync(userId, cancellationToken)
+            : null;
+
+        if (rows.Count == 0 && standaloneEmail is null)
+            return RequiredPasswordSetResult.UserNotFound;
+
+        var now = DateTime.UtcNow;
+        var newHash = BCrypt.Net.BCrypt.HashPassword(newPassword);
+
+        await using var transaction = await db.Database.BeginTransactionAsync(
+            IsolationLevel.ReadCommitted,
+            cancellationToken);
+
+        if (rows.Count > 0)
+        {
+            foreach (var row in rows)
+            {
+                row.PasswordHash = newHash;
+                row.UpdatedAt = now;
+            }
+            await db.SaveChangesAsync(cancellationToken);
+            await DeleteLegacyBridgeAsync(userId, cancellationToken);
+        }
+        else
+        {
+            await UpsertStandalonePasswordAsync(
+                userId,
+                standaloneEmail!,
+                newHash,
+                cancellationToken);
+        }
+
+        await MarkPasswordSetAsync(userId, now, cancellationToken);
+        await refreshSessions.RevokeAllAsync(
+            userId,
+            "business",
+            "required_password_set",
+            cancellationToken);
+
+        await transaction.CommitAsync(cancellationToken);
+        return RequiredPasswordSetResult.Success;
     }
 
     private Task<List<BusinessUser>> ResolveRowsAsync(
@@ -210,12 +310,84 @@ public sealed class BusinessPasswordService(
             .ToListAsync(cancellationToken);
     }
 
+    private async Task<string?> GetActiveStandaloneIdentityEmailAsync(
+        string userId,
+        CancellationToken cancellationToken)
+    {
+        if (!Guid.TryParse(userId, out var parsed))
+            return null;
+
+        var connection = db.Database.GetDbConnection();
+        var shouldClose = connection.State != ConnectionState.Open;
+        try
+        {
+            if (shouldClose)
+                await connection.OpenAsync(cancellationToken);
+
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT email
+                FROM "StandaloneAuthIdentity"
+                WHERE id = @userId
+                  AND "emailConfirmedAt" IS NOT NULL
+                  AND "deletedAt" IS NULL
+                  AND ("bannedUntil" IS NULL OR "bannedUntil" <= now())
+                LIMIT 1
+                """;
+            AddParameter(command, "userId", parsed);
+            var value = await command.ExecuteScalarAsync(cancellationToken);
+            return value is null or DBNull ? null : Convert.ToString(value)?.Trim().ToLowerInvariant();
+        }
+        finally
+        {
+            if (shouldClose && connection.State == ConnectionState.Open)
+                await connection.CloseAsync();
+        }
+    }
+
+    private Task<int> UpsertStandalonePasswordAsync(
+        string userId,
+        string email,
+        string passwordHash,
+        CancellationToken cancellationToken) =>
+        db.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO "LegacyAuthUserPassword" ("authUserId", "email", "passwordHash", "importedAt")
+            VALUES ({userId}, {email}, {passwordHash}, now())
+            ON CONFLICT ("authUserId") DO UPDATE SET
+                "email" = EXCLUDED."email",
+                "passwordHash" = EXCLUDED."passwordHash",
+                "importedAt" = now();
+            UPDATE "StandaloneAuthIdentity"
+            SET "hasPassword" = true, "importedAt" = now()
+            WHERE id::text = {userId};
+            """, cancellationToken);
+
+    private Task<int> MarkPasswordSetAsync(
+        string userId,
+        DateTime now,
+        CancellationToken cancellationToken) =>
+        db.Database.ExecuteSqlInterpolatedAsync($"""
+            UPDATE "AuthPasswordPolicy"
+            SET "requiresPassword" = false,
+                "passwordSetAt" = {now},
+                "updatedAt" = {now}
+            WHERE "authUserId" = {userId};
+            """, cancellationToken);
+
     private Task<int> DeleteLegacyBridgeAsync(
         string userId,
         CancellationToken cancellationToken) =>
         db.Database.ExecuteSqlInterpolatedAsync(
             $"DELETE FROM \"LegacyAuthUserPassword\" WHERE \"authUserId\" = {userId}",
             cancellationToken);
+
+    private static void AddParameter(DbCommand command, string name, object value)
+    {
+        var parameter = command.CreateParameter();
+        parameter.ParameterName = name;
+        parameter.Value = value;
+        command.Parameters.Add(parameter);
+    }
 
     private static string Hash(string token)
     {
