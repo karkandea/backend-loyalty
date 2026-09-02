@@ -23,9 +23,7 @@ public sealed class StandaloneAuthDbContext(DbContextOptions<StandaloneAuthDbCon
             value => Guid.Parse(value),
             value => value.ToString());
         var optionalUuidStringConverter = new ValueConverter<string?, Guid?>(
-            value => string.IsNullOrWhiteSpace(value)
-                ? null
-                : Guid.TryParse(value, out var parsed) ? parsed : null,
+            value => ParseOptionalGuid(value),
             value => value.HasValue ? value.Value.ToString() : null);
 
         modelBuilder.Entity<Business>(entity =>
@@ -114,6 +112,7 @@ public sealed class StandaloneAuthDbContext(DbContextOptions<StandaloneAuthDbCon
         {
             entity.ToTable("Outlet");
             entity.HasKey(x => x.Id);
+            entity.Property(x => x.Id).HasColumnName("id");
             entity.Property(x => x.BusinessId).HasColumnName("businessId");
             entity.Property(x => x.Name).HasColumnName("name");
             entity.Property(x => x.IsActive).HasColumnName("isActive");
@@ -162,4 +161,7 @@ public sealed class StandaloneAuthDbContext(DbContextOptions<StandaloneAuthDbCon
             entity.HasIndex(x => x.ExpiresAt);
         });
     }
+
+    private static Guid? ParseOptionalGuid(string? value) =>
+        Guid.TryParse(value, out var parsed) ? parsed : null;
 }
