@@ -123,7 +123,11 @@ PY
 }
 
 login() {
-  local email="$1" prefix="$2" body="$TMP_DIR/$prefix.login.json" out="$TMP_DIR/$prefix.login.out" status
+  local email="$1"
+  local prefix="$2"
+  local body="$TMP_DIR/$prefix.login.json"
+  local out="$TMP_DIR/$prefix.login.out"
+  local status
   write_json login "$body" "$email" "$FIXTURE_PASSWORD"
   status="$(post_file '/api/business/auth/login' "$body" "$out")"
   [[ "$status" == '200' ]] || { echo "ERROR: $prefix login expected 200, got $status" >&2; cat "$out" >&2; return 1; }
