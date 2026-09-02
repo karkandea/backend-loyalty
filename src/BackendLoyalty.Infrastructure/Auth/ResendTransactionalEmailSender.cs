@@ -2,14 +2,12 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using BackendLoyalty.Application.Auth;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
 namespace BackendLoyalty.Infrastructure.Auth;
 
 public sealed class ResendTransactionalEmailSender(
     HttpClient httpClient,
-    IConfiguration configuration,
     ILogger<ResendTransactionalEmailSender> logger) : ITransactionalEmailSender
 {
     private const string ResendApiUrl = "https://api.resend.com/emails";
@@ -25,14 +23,14 @@ public sealed class ResendTransactionalEmailSender(
             return false;
         }
 
-        var apiKey = configuration["RESEND_API_KEY"]?.Trim();
+        var apiKey = Environment.GetEnvironmentVariable("RESEND_API_KEY")?.Trim();
         if (string.IsNullOrWhiteSpace(apiKey))
         {
             logger.LogWarning("RESEND_API_KEY is missing; password-reset email was not sent.");
             return false;
         }
 
-        var from = configuration["RESEND_FROM"]?.Trim();
+        var from = Environment.GetEnvironmentVariable("RESEND_FROM")?.Trim();
         if (string.IsNullOrWhiteSpace(from))
             from = "Dualangka <noreply@dualangka.com>";
 
