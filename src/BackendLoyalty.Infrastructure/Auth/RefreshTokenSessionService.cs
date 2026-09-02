@@ -89,18 +89,10 @@ public sealed class RefreshTokenSessionService(StandaloneAuthDbContext db) : IRe
         }
 
         var nextId = Guid.NewGuid();
-        var consumed = await db.AuthRefreshSessions
-            .Where(x => x.Id == current.Id && x.RevokedAt == null && x.ExpiresAt > now)
-            .ExecuteUpdateAsync(
-                setters => setters
-                    .SetProperty(x => x.RevokedAt, now)
-                    .SetProperty(x => x.RevokeReason, "rotated")
-                    .SetProperty(x => x.ReplacedBySessionId, nextId),
-                cancellationToken);
 
-        if (consumed != 1)
-            return false;
-
+        // Insert the replacement first inside the same transaction. This is compatible
+        // with databases that still have a FK on replacedBySessionId and remains race-safe:
+        // a concurrent loser rolls this insert back when the conditional consume affects 0 rows.
         db.AuthRefreshSessions.Add(new AuthRefreshSession
         {
             Id = nextId,
@@ -118,8 +110,23 @@ public sealed class RefreshTokenSessionService(StandaloneAuthDbContext db) : IRe
             ReplacedBySessionId = null,
             CreatedAt = now,
         });
-
         await db.SaveChangesAsync(cancellationToken);
+
+        var consumed = await db.AuthRefreshSessions
+            .Where(x => x.Id == current.Id && x.RevokedAt == null && x.ExpiresAt > now)
+            .ExecuteUpdateAsync(
+                setters => setters
+                    .SetProperty(x => x.RevokedAt, now)
+                    .SetProperty(x => x.RevokeReason, "rotated")
+                    .SetProperty(x => x.ReplacedBySessionId, nextId),
+                cancellationToken);
+
+        if (consumed != 1)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return false;
+        }
+
         await transaction.CommitAsync(cancellationToken);
         return true;
     }
