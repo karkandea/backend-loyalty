@@ -34,8 +34,6 @@ CREATE TABLE IF NOT EXISTS "AuthRefreshSession" (
   CONSTRAINT "AuthRefreshSession_tokenHash_sha256_ck" CHECK (length("tokenHash") = 64),
   CONSTRAINT "AuthRefreshSession_expiry_ck" CHECK ("expiresAt" > "createdAt"),
   CONSTRAINT "AuthRefreshSession_parent_fkey" FOREIGN KEY ("parentSessionId")
-    REFERENCES "AuthRefreshSession"(id) ON DELETE SET NULL,
-  CONSTRAINT "AuthRefreshSession_replaced_fkey" FOREIGN KEY ("replacedBySessionId")
     REFERENCES "AuthRefreshSession"(id) ON DELETE SET NULL
 );
 
