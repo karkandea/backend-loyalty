@@ -2,6 +2,7 @@ using BackendLoyalty.Api.Auth;
 using BackendLoyalty.Api.Contracts;
 using BackendLoyalty.Application.Auth;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace BackendLoyalty.Api.Controllers;
 
@@ -12,6 +13,7 @@ public sealed class AdminAuthController(
     ILoyaltyJwtTokenIssuer tokenIssuer,
     IRefreshTokenSessionService refreshSessions) : ControllerBase
 {
+    [EnableRateLimiting("auth-login")]
     [HttpPost("login")]
     public async Task<IActionResult> Login(
         [FromBody] LoginRequest request,
