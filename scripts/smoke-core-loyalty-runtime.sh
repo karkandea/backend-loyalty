@@ -179,8 +179,8 @@ INSERT INTO "AdminUser" (id,"businessId","outletId",email,"passwordHash","fullNa
 VALUES (:'staff_id',:'business_id',:'outlet_id',:'staff_email',:'staff_hash','Core Runtime Staff','STAFF',true,NULL,now(),now());
 
 INSERT INTO "Card" (id,"businessId",name,description,level,"requiredStamps",status,"termsAndConditions","isDeleted","howItWorksSteps","createdAt","updatedAt") VALUES
-(:'card1',:'business_id','Core Level 1','Smoke exact-boundary card',1,5,'ACTIVE',NULL,false,ARRAY[]::text[],now(),now()),
-(:'card2',:'business_id','Core Level 2','Smoke overflow cycle card',2,3,'ACTIVE',NULL,false,ARRAY[]::text[],now()+interval '1 millisecond',now());
+(:'card1',:'business_id','Core Level 1','Smoke exact-boundary card',1,5,'ACTIVE',NULL,false,'[]'::jsonb,now(),now()),
+(:'card2',:'business_id','Core Level 2','Smoke overflow cycle card',2,3,'ACTIVE',NULL,false,'[]'::jsonb,now()+interval '1 millisecond',now());
 
 INSERT INTO "Reward" (id,"businessId",name,description,"sourceType","defaultExpiryDays","createdAt","updatedAt")
 VALUES (:'reward_id',:'business_id','Core Smoke Reward','Milestone runtime smoke','MILESTONE',30,now(),now());
