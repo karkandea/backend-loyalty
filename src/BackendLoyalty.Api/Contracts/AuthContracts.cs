@@ -22,3 +22,6 @@ public sealed record ResetPasswordRequest(
 public sealed record UpdatePasswordRequest(
     [Required, MinLength(1)] string CurrentPassword,
     [Required, MinLength(8), MaxLength(128)] string NewPassword);
+
+public sealed record SetPasswordRequest(
+    [Required, MinLength(8), MaxLength(128)] string NewPassword);
