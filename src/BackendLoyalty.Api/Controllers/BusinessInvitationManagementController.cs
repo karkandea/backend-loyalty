@@ -4,6 +4,7 @@ using BackendLoyalty.Api.Contracts;
 using BackendLoyalty.Application.Auth;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace BackendLoyalty.Api.Controllers;
 
@@ -49,6 +50,7 @@ public sealed class BusinessInvitationManagementController(
     }
 
     [Authorize]
+    [EnableRateLimiting("team-mutation")]
     [HttpPost("revoke")]
     public async Task<IActionResult> Revoke(
         [FromBody] RevokeBusinessInvitationRequest request,
