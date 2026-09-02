@@ -35,8 +35,6 @@ public sealed class BusinessPasswordService(
             .GroupBy(x => string.IsNullOrWhiteSpace(x.AuthUserId) ? x.Id : x.AuthUserId!)
             .ToList();
 
-        // Supabase auth had globally unique emails. If migrated data violates that
-        // assumption across multiple auth identities, do not guess which account to reset.
         if (groups.Count != 1)
             return null;
 
@@ -222,8 +220,8 @@ public sealed class BusinessPasswordService(
                 return new PasswordPolicyStatus(false, null, null, false);
 
             var requiresPassword = reader.GetBoolean(0);
-            var graceExpiresAt = reader.IsDBNull(1) ? null : reader.GetFieldValue<DateTime>(1);
-            var passwordSetAt = reader.IsDBNull(2) ? null : reader.GetFieldValue<DateTime>(2);
+            DateTime? graceExpiresAt = reader.IsDBNull(1) ? null : reader.GetFieldValue<DateTime>(1);
+            DateTime? passwordSetAt = reader.IsDBNull(2) ? null : reader.GetFieldValue<DateTime>(2);
             var isExpired = requiresPassword && graceExpiresAt is not null && graceExpiresAt <= DateTime.UtcNow;
 
             return new PasswordPolicyStatus(
