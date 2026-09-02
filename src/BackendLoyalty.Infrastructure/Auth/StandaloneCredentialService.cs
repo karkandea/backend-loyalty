@@ -1,3 +1,4 @@
+using System.Data.Common;
 using BackendLoyalty.Application.Auth;
 using BackendLoyalty.Domain.Entities;
 using BackendLoyalty.Infrastructure.Persistence;
@@ -97,7 +98,7 @@ public sealed class StandaloneCredentialService(StandaloneAuthDbContext db) : IS
             .ToListAsync(cancellationToken);
 
         if (rows.Count == 0)
-            throw InvalidCredentials();
+            return await AuthenticateZeroMembershipIdentityAsync(normalizedEmail, password, cancellationToken);
 
         var groupedByAuthUser = rows
             .GroupBy(x => string.IsNullOrWhiteSpace(x.AuthUserId) ? x.Id : x.AuthUserId!)
@@ -251,17 +252,158 @@ public sealed class StandaloneCredentialService(StandaloneAuthDbContext db) : IS
         if (string.Equals(authKind, "admin", StringComparison.OrdinalIgnoreCase))
             return await db.AdminUsers.AnyAsync(x => x.Id == userId && x.IsActive, cancellationToken);
 
+        bool hasMembership;
         if (Guid.TryParse(userId, out var authUserGuid))
         {
             var normalizedAuthUserId = authUserGuid.ToString();
-            return await db.BusinessUsers.AnyAsync(
+            hasMembership = await db.BusinessUsers.AnyAsync(
                 x => x.IsActive && (x.Id == userId || x.AuthUserId == normalizedAuthUserId),
                 cancellationToken);
         }
+        else
+        {
+            hasMembership = await db.BusinessUsers.AnyAsync(
+                x => x.IsActive && x.Id == userId,
+                cancellationToken);
+        }
 
-        return await db.BusinessUsers.AnyAsync(
-            x => x.IsActive && x.Id == userId,
-            cancellationToken);
+        if (hasMembership)
+            return true;
+
+        return await IsStandaloneIdentityActiveAsync(userId, cancellationToken);
+    }
+
+    private async Task<BusinessLoginProfile> AuthenticateZeroMembershipIdentityAsync(
+        string normalizedEmail,
+        string password,
+        CancellationToken cancellationToken)
+    {
+        var identity = await GetStandaloneIdentityByEmailAsync(normalizedEmail, cancellationToken);
+        if (identity is null)
+            throw InvalidCredentials();
+
+        var now = DateTime.UtcNow;
+        if (identity.DeletedAt is not null ||
+            (identity.BannedUntil is not null && identity.BannedUntil > now))
+        {
+            throw new CredentialException(CredentialFailureReason.InactiveAccount, "Account has been disabled");
+        }
+
+        if (identity.EmailConfirmedAt is null)
+        {
+            throw new CredentialException(CredentialFailureReason.InactiveAccount, "Email address is not confirmed yet");
+        }
+
+        if (!identity.HasPassword)
+            throw InvalidCredentials();
+
+        var legacyHash = await GetLegacyAuthPasswordHashAsync(identity.UserId, cancellationToken);
+        if (!IsUsableBcryptHash(legacyHash))
+            throw PasswordMigrationRequired();
+
+        if (!BCrypt.Net.BCrypt.Verify(password, legacyHash))
+            throw InvalidCredentials();
+
+        var role = string.IsNullOrWhiteSpace(identity.ResolvedRole)
+            ? null
+            : identity.ResolvedRole.Trim().ToLowerInvariant();
+
+        return new BusinessLoginProfile(
+            identity.UserId,
+            Array.Empty<BusinessMembership>(),
+            role);
+    }
+
+    private async Task<StandaloneIdentitySnapshot?> GetStandaloneIdentityByEmailAsync(
+        string normalizedEmail,
+        CancellationToken cancellationToken)
+    {
+        var connection = db.Database.GetDbConnection();
+        var shouldClose = connection.State != System.Data.ConnectionState.Open;
+
+        try
+        {
+            if (shouldClose)
+                await connection.OpenAsync(cancellationToken);
+
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT id::text, "resolvedRole", "emailConfirmedAt", "deletedAt", "bannedUntil", "hasPassword"
+                FROM "StandaloneAuthIdentity"
+                WHERE lower(trim(email)) = @email
+                LIMIT 2
+                """;
+            AddParameter(command, "email", normalizedEmail);
+
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            if (!await reader.ReadAsync(cancellationToken))
+                return null;
+
+            var snapshot = new StandaloneIdentitySnapshot(
+                reader.GetString(0),
+                reader.IsDBNull(1) ? null : reader.GetString(1),
+                reader.IsDBNull(2) ? null : reader.GetFieldValue<DateTime>(2),
+                reader.IsDBNull(3) ? null : reader.GetFieldValue<DateTime>(3),
+                reader.IsDBNull(4) ? null : reader.GetFieldValue<DateTime>(4),
+                reader.GetBoolean(5));
+
+            if (await reader.ReadAsync(cancellationToken))
+                throw new CredentialException(CredentialFailureReason.InactiveAccount, "Ambiguous account identity");
+
+            return snapshot;
+        }
+        catch (PostgresException ex) when (ex.SqlState is PostgresErrorCodes.UndefinedTable or PostgresErrorCodes.InvalidSchemaName)
+        {
+            return null;
+        }
+        finally
+        {
+            if (shouldClose && connection.State == System.Data.ConnectionState.Open)
+                await connection.CloseAsync();
+        }
+    }
+
+    private async Task<bool> IsStandaloneIdentityActiveAsync(
+        string userId,
+        CancellationToken cancellationToken)
+    {
+        if (!Guid.TryParse(userId, out var parsedUserId))
+            return false;
+
+        var connection = db.Database.GetDbConnection();
+        var shouldClose = connection.State != System.Data.ConnectionState.Open;
+
+        try
+        {
+            if (shouldClose)
+                await connection.OpenAsync(cancellationToken);
+
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM "StandaloneAuthIdentity"
+                    WHERE id = @userId
+                      AND "emailConfirmedAt" IS NOT NULL
+                      AND "deletedAt" IS NULL
+                      AND ("bannedUntil" IS NULL OR "bannedUntil" <= now())
+                      AND "hasPassword" = true
+                )
+                """;
+            AddParameter(command, "userId", parsedUserId);
+
+            var value = await command.ExecuteScalarAsync(cancellationToken);
+            return value is bool active && active;
+        }
+        catch (PostgresException ex) when (ex.SqlState is PostgresErrorCodes.UndefinedTable or PostgresErrorCodes.InvalidSchemaName)
+        {
+            return false;
+        }
+        finally
+        {
+            if (shouldClose && connection.State == System.Data.ConnectionState.Open)
+                await connection.CloseAsync();
+        }
     }
 
     private async Task<bool> VerifyAndAdoptHashAsync(
@@ -292,8 +434,6 @@ public sealed class StandaloneCredentialService(StandaloneAuthDbContext db) : IS
             if (shouldClose)
                 await connection.OpenAsync(cancellationToken);
 
-            // Standalone target: only this minimal app-owned bridge is needed.
-            // It contains legacy auth user IDs + bcrypt hashes, not Supabase runtime tables.
             var bridgeHash = await TryGetPasswordHashAsync(
                 connection,
                 "SELECT \"passwordHash\" FROM \"LegacyAuthUserPassword\" WHERE \"authUserId\" = @userId LIMIT 1",
@@ -303,8 +443,6 @@ public sealed class StandaloneCredentialService(StandaloneAuthDbContext db) : IS
             if (IsUsableBcryptHash(bridgeHash))
                 return bridgeHash;
 
-            // Transitional fallback: allows parity testing directly against the legacy
-            // Supabase PostgreSQL source, but the VPS target does not require auth.users.
             return await TryGetPasswordHashAsync(
                 connection,
                 "SELECT encrypted_password FROM auth.users WHERE id::text = @userId LIMIT 1",
@@ -319,7 +457,7 @@ public sealed class StandaloneCredentialService(StandaloneAuthDbContext db) : IS
     }
 
     private static async Task<string?> TryGetPasswordHashAsync(
-        System.Data.Common.DbConnection connection,
+        DbConnection connection,
         string commandText,
         string userId,
         CancellationToken cancellationToken)
@@ -328,10 +466,7 @@ public sealed class StandaloneCredentialService(StandaloneAuthDbContext db) : IS
         {
             await using var command = connection.CreateCommand();
             command.CommandText = commandText;
-            var parameter = command.CreateParameter();
-            parameter.ParameterName = "userId";
-            parameter.Value = userId;
-            command.Parameters.Add(parameter);
+            AddParameter(command, "userId", userId);
 
             var value = await command.ExecuteScalarAsync(cancellationToken);
             return value is null or DBNull ? null : Convert.ToString(value);
@@ -340,6 +475,14 @@ public sealed class StandaloneCredentialService(StandaloneAuthDbContext db) : IS
         {
             return null;
         }
+    }
+
+    private static void AddParameter(DbCommand command, string name, object value)
+    {
+        var parameter = command.CreateParameter();
+        parameter.ParameterName = name;
+        parameter.Value = value;
+        command.Parameters.Add(parameter);
     }
 
     private static bool IsUsableBcryptHash(string? hash) =>
@@ -358,4 +501,12 @@ public sealed class StandaloneCredentialService(StandaloneAuthDbContext db) : IS
         new(
             CredentialFailureReason.PasswordMigrationRequired,
             "Password migration is required for this account. Import the legacy password bridge or reset the password.");
+
+    private sealed record StandaloneIdentitySnapshot(
+        string UserId,
+        string? ResolvedRole,
+        DateTime? EmailConfirmedAt,
+        DateTime? DeletedAt,
+        DateTime? BannedUntil,
+        bool HasPassword);
 }
