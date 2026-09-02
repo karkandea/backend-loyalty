@@ -4,6 +4,7 @@ public sealed record TeamInvitationSummary(
     string InvitationId,
     string Email,
     string Role,
+    IReadOnlyList<string> Permissions,
     DateTime ExpiresAt,
     DateTime CreatedAt,
     bool RequiresPassword);
