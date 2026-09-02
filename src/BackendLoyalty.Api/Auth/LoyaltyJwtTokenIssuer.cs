@@ -63,7 +63,11 @@ public sealed class LoyaltyJwtTokenIssuer(IConfiguration configuration) : ILoyal
         if (string.IsNullOrWhiteSpace(refreshToken))
             return null;
 
-        var handler = new JwtSecurityTokenHandler();
+        var handler = new JwtSecurityTokenHandler
+        {
+            MapInboundClaims = false,
+        };
+
         try
         {
             var principal = handler.ValidateToken(
