@@ -35,6 +35,8 @@ public sealed class BusinessPasswordService(
             .GroupBy(x => string.IsNullOrWhiteSpace(x.AuthUserId) ? x.Id : x.AuthUserId!)
             .ToList();
 
+        // Supabase auth had globally unique emails. If migrated data violates that
+        // assumption across multiple auth identities, do not guess which account to reset.
         if (groups.Count != 1)
             return null;
 
@@ -210,7 +212,7 @@ public sealed class BusinessPasswordService(
             command.CommandText = """
                 SELECT "requiresPassword", "graceExpiresAt", "passwordSetAt"
                 FROM "AuthPasswordPolicy"
-                WHERE "authUserId" = @userId
+                WHERE "authUserId"::text = @userId
                 LIMIT 1
                 """;
             AddParameter(command, "userId", userId);
@@ -369,7 +371,7 @@ public sealed class BusinessPasswordService(
             SET "requiresPassword" = false,
                 "passwordSetAt" = {now},
                 "updatedAt" = {now}
-            WHERE "authUserId" = {userId};
+            WHERE "authUserId"::text = {userId};
             """, cancellationToken);
 
     private Task<int> DeleteLegacyBridgeAsync(
