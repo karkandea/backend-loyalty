@@ -19,6 +19,14 @@ public sealed class StandaloneAuthDbContext(DbContextOptions<StandaloneAuthDbCon
         var authUserIdConverter = new ValueConverter<string?, Guid?>(
             value => string.IsNullOrWhiteSpace(value) ? null : Guid.Parse(value),
             value => value.HasValue ? value.Value.ToString() : null);
+        var uuidStringConverter = new ValueConverter<string, Guid>(
+            value => Guid.Parse(value),
+            value => value.ToString());
+        var optionalUuidStringConverter = new ValueConverter<string?, Guid?>(
+            value => string.IsNullOrWhiteSpace(value)
+                ? null
+                : Guid.TryParse(value, out var parsed) ? parsed : null,
+            value => value.HasValue ? value.Value.ToString() : null);
 
         modelBuilder.Entity<Business>(entity =>
         {
@@ -60,7 +68,10 @@ public sealed class StandaloneAuthDbContext(DbContextOptions<StandaloneAuthDbCon
         {
             entity.ToTable("BusinessInvitation");
             entity.HasKey(x => x.Id);
-            entity.Property(x => x.Id).HasColumnName("id");
+            entity.Property(x => x.Id)
+                .HasColumnName("id")
+                .HasColumnType("uuid")
+                .HasConversion(uuidStringConverter);
             entity.Property(x => x.BusinessId).HasColumnName("businessId");
             entity.Property(x => x.Email).HasColumnName("email");
             entity.Property(x => x.Role).HasColumnName("role");
@@ -68,7 +79,10 @@ public sealed class StandaloneAuthDbContext(DbContextOptions<StandaloneAuthDbCon
             entity.Property(x => x.ExpiresAt).HasColumnName("expiresAt");
             entity.Property(x => x.UsedAt).HasColumnName("usedAt");
             entity.Property(x => x.RevokedAt).HasColumnName("revokedAt");
-            entity.Property(x => x.InvitedBy).HasColumnName("invitedBy");
+            entity.Property(x => x.InvitedBy)
+                .HasColumnName("invitedBy")
+                .HasColumnType("uuid")
+                .HasConversion(optionalUuidStringConverter);
             entity.Property(x => x.RequiresPassword).HasColumnName("requiresPassword");
             entity.Property(x => x.CreatedAt).HasColumnName("createdAt");
             entity.Property(x => x.UpdatedAt).HasColumnName("updatedAt");
@@ -100,7 +114,6 @@ public sealed class StandaloneAuthDbContext(DbContextOptions<StandaloneAuthDbCon
         {
             entity.ToTable("Outlet");
             entity.HasKey(x => x.Id);
-            entity.Property(x => x.Id).HasColumnName("id");
             entity.Property(x => x.BusinessId).HasColumnName("businessId");
             entity.Property(x => x.Name).HasColumnName("name");
             entity.Property(x => x.IsActive).HasColumnName("isActive");
