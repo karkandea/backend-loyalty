@@ -63,6 +63,23 @@ PY
     ;;
 esac
 
+# PostgreSQL text rendering of booleans is f/t, not false/true. Normalize the
+# smoke assertion to the actual psql output so a correct runtime state does not
+# fail the harness.
+python3 - "$TMP_SCRIPT" <<'PY'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+src = path.read_text()
+old = '5:false:true|0:true|1|1'
+new = '5:f:t|0:t|1|1'
+count = src.count(old)
+if count != 1:
+    raise SystemExit(f'ERROR: expected exactly 1 legacy boolean assertion, found {count}')
+path.write_text(src.replace(old, new))
+PY
+
+echo "INFO: PostgreSQL boolean assertion normalized to f/t output."
 chmod 700 "$TMP_SCRIPT"
 bash -n "$TMP_SCRIPT"
 ENV_FILE="$ENV_FILE" bash "$TMP_SCRIPT"
