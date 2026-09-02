@@ -70,6 +70,7 @@ builder.Services.AddScoped<IRewardRedemptionService, RewardRedemptionService>();
 builder.Services.AddScoped<IMemberRewardTokenService, MemberRewardTokenService>();
 builder.Services.AddScoped<IAuditLogWriter, AuditLogWriter>();
 builder.Services.AddScoped<IStandaloneCredentialService, StandaloneCredentialService>();
+builder.Services.AddScoped<IRefreshTokenSessionService, RefreshTokenSessionService>();
 builder.Services.AddSingleton<ILoyaltyJwtTokenIssuer, LoyaltyJwtTokenIssuer>();
 
 builder.Services
