@@ -13,6 +13,7 @@ public sealed class BusinessInvitationsController(
     IBusinessInvitationService invitations,
     IBusinessInvitationManagementService management,
     IBusinessPasswordService passwords,
+    IStandaloneInvitationIdentityService standaloneIdentities,
     ITransactionalEmailSender emailSender,
     IConfiguration configuration) : ControllerBase
 {
@@ -66,6 +67,13 @@ public sealed class BusinessInvitationsController(
 
         if (issue is not null)
         {
+            // Legacy Supabase treated any existing auth identity as an existing user,
+            // even when that identity had zero BusinessUser memberships.
+            await standaloneIdentities.NormalizeInvitationForExistingIdentityAsync(
+                issue.InvitationId,
+                issue.Email,
+                cancellationToken);
+
             await emailSender.SendBusinessInvitationAsync(
                 issue.Email,
                 issue.BusinessName,
@@ -115,6 +123,14 @@ public sealed class BusinessInvitationsController(
         [FromBody] RegisterBusinessInvitationRequest request,
         CancellationToken cancellationToken)
     {
+        if (await standaloneIdentities.InvitationTargetsExistingIdentityAsync(
+                request.Token,
+                cancellationToken))
+        {
+            return Conflict(
+                ApiResponse<object>.Fail("USER_EXISTS", "Account already exists. Please login."));
+        }
+
         var outcome = await invitations.RegisterAsync(
             request.Token,
             request.FullName,
@@ -154,6 +170,16 @@ public sealed class BusinessInvitationsController(
             userId,
             request.Token,
             cancellationToken);
+
+        if (outcome.Status == InvitationAcceptanceStatus.IdentityNotFound)
+        {
+            var zeroMembershipOutcome = await standaloneIdentities.AcceptZeroMembershipAsync(
+                userId,
+                request.Token,
+                cancellationToken);
+            if (zeroMembershipOutcome is not null)
+                outcome = zeroMembershipOutcome;
+        }
 
         return outcome.Status switch
         {
