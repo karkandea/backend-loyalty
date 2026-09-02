@@ -37,6 +37,9 @@ services:
       Jwt__AccessTokenMinutes: ${Jwt__AccessTokenMinutes:-15}
       Jwt__RefreshTokenDays: ${Jwt__RefreshTokenDays:-7}
       Cors__AllowedOrigins__0: ${Cors__AllowedOrigins__0:-http://localhost:5173}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      RESEND_FROM: "${RESEND_FROM:-Dualangka <noreply@dualangka.com>}"
+      EMAIL_CONFIRM_BASE_DOMAIN: ${EMAIL_CONFIRM_BASE_DOMAIN:-dualangka.com}
     ports:
       - "127.0.0.1:${LOYALTY_API_PORT:-5092}:8080"
     networks:
