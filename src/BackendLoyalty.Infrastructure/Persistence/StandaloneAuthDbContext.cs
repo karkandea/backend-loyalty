@@ -11,6 +11,7 @@ public sealed class StandaloneAuthDbContext(DbContextOptions<StandaloneAuthDbCon
     public DbSet<AdminUser> AdminUsers => Set<AdminUser>();
     public DbSet<Outlet> Outlets => Set<Outlet>();
     public DbSet<AuthRefreshSession> AuthRefreshSessions => Set<AuthRefreshSession>();
+    public DbSet<AuthPasswordReset> AuthPasswordResets => Set<AuthPasswordReset>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -100,6 +101,25 @@ public sealed class StandaloneAuthDbContext(DbContextOptions<StandaloneAuthDbCon
             entity.HasIndex(x => x.TokenHash).IsUnique();
             entity.HasIndex(x => new { x.UserId, x.AuthKind });
             entity.HasIndex(x => x.FamilyId);
+            entity.HasIndex(x => x.ExpiresAt);
+        });
+
+        modelBuilder.Entity<AuthPasswordReset>(entity =>
+        {
+            entity.ToTable("AuthPasswordReset");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Id).HasColumnName("id");
+            entity.Property(x => x.UserId).HasColumnName("userId");
+            entity.Property(x => x.AuthKind).HasColumnName("authKind");
+            entity.Property(x => x.Email).HasColumnName("email");
+            entity.Property(x => x.TokenHash).HasColumnName("tokenHash");
+            entity.Property(x => x.ExpiresAt).HasColumnName("expiresAt");
+            entity.Property(x => x.UsedAt).HasColumnName("usedAt");
+            entity.Property(x => x.Ip).HasColumnName("ip");
+            entity.Property(x => x.UserAgent).HasColumnName("userAgent");
+            entity.Property(x => x.CreatedAt).HasColumnName("createdAt");
+            entity.HasIndex(x => x.TokenHash).IsUnique();
+            entity.HasIndex(x => new { x.UserId, x.AuthKind });
             entity.HasIndex(x => x.ExpiresAt);
         });
     }
