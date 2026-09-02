@@ -9,6 +9,33 @@ namespace BackendLoyalty.Infrastructure.Auth;
 public sealed class BusinessInvitationManagementService(StandaloneAuthDbContext db)
     : IBusinessInvitationManagementService
 {
+    public async Task<bool> CanManageTeamAsync(
+        string userId,
+        string businessId,
+        string role,
+        CancellationToken cancellationToken)
+    {
+        var normalizedRole = role.Trim().ToLowerInvariant();
+        if (normalizedRole == "owner")
+            return true;
+        if (normalizedRole != "admin")
+            return false;
+
+        var rows = await ResolveRowsAsync(userId, businessId, cancellationToken);
+        if (rows.Count != 1)
+            return false;
+
+        var permissions = rows[0].Permissions;
+        if (permissions is null || permissions.RootElement.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+            return true;
+        if (permissions.RootElement.ValueKind != JsonValueKind.Array)
+            return false;
+
+        return permissions.RootElement.EnumerateArray().Any(x =>
+            x.ValueKind == JsonValueKind.String &&
+            string.Equals(x.GetString(), "can_manage_team", StringComparison.Ordinal));
+    }
+
     public async Task<(InvitationManagementResult Result, IReadOnlyList<TeamInvitationSummary> Items)> ListActiveAsync(
         string userId,
         string businessId,
@@ -67,33 +94,6 @@ public sealed class BusinessInvitationManagementService(StandaloneAuthDbContext 
         return affected == 1
             ? InvitationManagementResult.Success
             : InvitationManagementResult.NotFound;
-    }
-
-    private async Task<bool> CanManageTeamAsync(
-        string userId,
-        string businessId,
-        string role,
-        CancellationToken cancellationToken)
-    {
-        var normalizedRole = role.Trim().ToLowerInvariant();
-        if (normalizedRole == "owner")
-            return true;
-        if (normalizedRole != "admin")
-            return false;
-
-        var rows = await ResolveRowsAsync(userId, businessId, cancellationToken);
-        if (rows.Count != 1)
-            return false;
-
-        var permissions = rows[0].Permissions;
-        if (permissions is null || permissions.RootElement.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
-            return true;
-        if (permissions.RootElement.ValueKind != JsonValueKind.Array)
-            return false;
-
-        return permissions.RootElement.EnumerateArray().Any(x =>
-            x.ValueKind == JsonValueKind.String &&
-            string.Equals(x.GetString(), "can_manage_team", StringComparison.Ordinal));
     }
 
     private Task<List<BusinessUser>> ResolveRowsAsync(
