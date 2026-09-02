@@ -15,14 +15,10 @@ command -v psql >/dev/null 2>&1 || { echo 'ERROR: psql is required' >&2; exit 1;
 
 PSQL=(psql "$SOURCE_DB_URL" -v ON_ERROR_STOP=1 -X -P pager=off)
 
-# Fail closed if this is not the expected kind of source database.
-"${PSQL[@]}" -qAt <<'SQL' >/dev/null
-SELECT CASE
-  WHEN to_regclass('auth.users') IS NULL THEN pg_catalog.raise_exception('auth.users missing')
-  WHEN to_regclass('public."BusinessUser"') IS NULL THEN pg_catalog.raise_exception('public.BusinessUser missing')
-  ELSE 'ok'
-END;
-SQL
+AUTH_USERS_OK="$("${PSQL[@]}" -qAtc "SELECT to_regclass('auth.users') IS NOT NULL;")"
+BUSINESS_USER_OK="$("${PSQL[@]}" -qAtc "SELECT to_regclass('public.\"BusinessUser\"') IS NOT NULL;")"
+[[ "$AUTH_USERS_OK" == "t" ]] || { echo 'ERROR: auth.users missing; refusing to audit unexpected database' >&2; exit 1; }
+[[ "$BUSINESS_USER_OK" == "t" ]] || { echo 'ERROR: public.BusinessUser missing; refusing to audit unexpected database' >&2; exit 1; }
 
 echo '=== READ-ONLY legacy Supabase auth-state audit ==='
 
