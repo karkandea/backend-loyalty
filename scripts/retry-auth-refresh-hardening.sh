@@ -25,7 +25,6 @@ psql_exec() {
 }
 
 diagnostics() {
-  set +e
   echo
   echo "=== backend-loyalty logs (last 180 lines) ===" >&2
   docker logs --tail 180 "$API_CONTAINER" 2>&1 >&2 || true
@@ -59,7 +58,15 @@ LIMIT 8;
 SQL
 }
 
-trap diagnostics ERR
+on_error() {
+  local rc=$?
+  set +e
+  diagnostics
+  echo >&2
+  echo "FAIL: diagnostic retry stopped with exit code $rc." >&2
+  exit "$rc"
+}
+trap on_error ERR
 
 echo "==> Removing obsolete replacement FK if an earlier partial attempt created it..."
 psql_exec <<'SQL'
@@ -76,6 +83,5 @@ echo "==> Running refresh hardening deployment + end-to-end smoke test..."
 bash scripts/deploy-auth-refresh-hardening.sh
 
 trap - ERR
-
 echo
 echo "PASS: diagnostic retry completed successfully."
