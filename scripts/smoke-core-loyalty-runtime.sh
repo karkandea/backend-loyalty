@@ -223,7 +223,7 @@ SELECT concat_ws('|',
 );
 SQL
 )"
-[[ "$EXACT_STATE" == "5:false:true|0:true|1|1" ]] || { echo "ERROR: exact-boundary state invalid: $EXACT_STATE" >&2; exit 1; }
+[[ "$EXACT_STATE" == "5:f:t|0:t|1|1" ]] || { echo "ERROR: exact-boundary state invalid: $EXACT_STATE" >&2; exit 1; }
 echo "PASS: exact completion deactivates 5/5 card, creates level-2 0/3 card, reward, and transaction."
 
 echo "==> [5/10] Testing +7 overflow across repeated level-2 cycles..."
