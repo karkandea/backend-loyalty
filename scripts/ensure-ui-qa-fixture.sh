@@ -25,10 +25,14 @@ MEMBER_CARD_ID='10000000-0000-0000-0000-000000000006'
 REWARD_ID='10000000-0000-0000-0000-000000000007'
 MILESTONE_ID='10000000-0000-0000-0000-000000000008'
 CARD_TWO_ID='10000000-0000-0000-0000-000000000009'
+MEMBER_IDENTITY_ID='10000000-0000-0000-0000-000000000010'
 
 STAFF_EMAIL='qa.pos@loyalty.local'
 STAFF_PASSWORD='SmokeOnly-Refresh-2026!'
 STAFF_BCRYPT='$2y$10$uelGbUGlkEenIW0KuLdQhe48XrVAAP0TtBEsccu34TLv6q2koWYfu'
+MEMBER_EMAIL='qa.member@loyalty.local'
+MEMBER_PASSWORD='MemberSmoke-2026!'
+MEMBER_SCRYPT='scrypt$00112233445566778899aabbccddeeff$3bb6b61f3a29b277aec7ba087a5ff733c56ae9925ab929dd27c4b32fbac01774c6d99d3b953eba2a58d30e6e674aa8d1cc89c828c96f38475ad92093839806ba'
 MEMBER_BARCODE='QA-MEMBER-001'
 
 psql_exec() {
@@ -44,6 +48,9 @@ psql_exec -q \
   -v staff_email="$STAFF_EMAIL" \
   -v staff_hash="$STAFF_BCRYPT" \
   -v member_id="$MEMBER_ID" \
+  -v member_identity_id="$MEMBER_IDENTITY_ID" \
+  -v member_email="$MEMBER_EMAIL" \
+  -v member_hash="$MEMBER_SCRYPT" \
   -v barcode="$MEMBER_BARCODE" \
   -v card1="$CARD_ONE_ID" \
   -v card2="$CARD_TWO_ID" \
@@ -60,6 +67,7 @@ DELETE FROM "MemberReward" WHERE "businessId" = :'business_id';
 DELETE FROM "CardMilestone" WHERE "businessId" = :'business_id';
 DELETE FROM "MemberCard" WHERE "businessId" = :'business_id';
 DELETE FROM "MemberSession" WHERE "businessId" = :'business_id';
+DELETE FROM "MemberIdentity" WHERE "businessId" = :'business_id';
 DELETE FROM "Member" WHERE "businessId" = :'business_id';
 DELETE FROM "Reward" WHERE "businessId" = :'business_id';
 DELETE FROM "Card" WHERE "businessId" = :'business_id';
@@ -87,7 +95,10 @@ INSERT INTO "CardMilestone" (id,"businessId","cardId","stampCount","sortOrder","
 VALUES (:'milestone_id',:'business_id',:'card1',5,1,:'reward_id','REWARD',NULL,'QA Reward','Issued at 5 stamps',now(),now());
 
 INSERT INTO "Member" (id,"businessId",name,email,phone,"memberBarcode","totalStamps","dateJoined","createdAt","updatedAt")
-VALUES (:'member_id',:'business_id','QA Member','qa.member@loyalty.local',NULL,:'barcode',0,now(),now(),now());
+VALUES (:'member_id',:'business_id','QA Member',:'member_email',NULL,:'barcode',0,now(),now(),now());
+
+INSERT INTO "MemberIdentity" (id,"businessId","memberId",email,"passwordHash","verifiedAt","lastLoginAt","failedLoginCount","lockedAt","createdAt","updatedAt")
+VALUES (:'member_identity_id',:'business_id',:'member_id',:'member_email',:'member_hash',now(),NULL,0,NULL,now(),now());
 
 INSERT INTO "MemberCard" (id,"businessId","memberId","cardId","currentStamps","isActive","startedAt","completedAt","createdAt","updatedAt")
 VALUES (:'member_card',:'business_id',:'member_id',:'card1',0,true,now(),NULL,now(),now());
@@ -96,9 +107,12 @@ COMMIT;
 SQL
 
 echo "PASS: persistent UI QA fixture is ready."
-echo "Login URL: http://103.175.207.127:8088/login/admin"
-echo "Email: ${STAFF_EMAIL}"
-echo "Password: ${STAFF_PASSWORD}"
+echo "POS URL: http://103.175.207.127:8088/login/admin"
+echo "POS email: ${STAFF_EMAIL}"
+echo "POS password: ${STAFF_PASSWORD}"
+echo "Member URL: http://103.175.207.127:8088/login/member"
+echo "Member email: ${MEMBER_EMAIL}"
+echo "Member password: ${MEMBER_PASSWORD}"
 echo "Member barcode: ${MEMBER_BARCODE}"
-echo "Business slug (forgot-password dev/IP flow): qa-pos"
+echo "Business slug: qa-pos"
 echo "Reset this fixture anytime by rerunning this script."
