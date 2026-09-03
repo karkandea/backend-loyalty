@@ -1,0 +1,239 @@
+using System.Text;
+using System.Threading.RateLimiting;
+using BackendLoyalty.Api.Auth;
+using BackendLoyalty.Api.Contracts;
+using BackendLoyalty.Application.Auditing;
+using BackendLoyalty.Application.Auth;
+using BackendLoyalty.Application.Loyalty;
+using BackendLoyalty.Application.Members;
+using BackendLoyalty.Application.Rewards;
+using BackendLoyalty.Infrastructure.Auditing;
+using BackendLoyalty.Infrastructure.Auth;
+using BackendLoyalty.Infrastructure.Loyalty;
+using BackendLoyalty.Infrastructure.Members;
+using BackendLoyalty.Infrastructure.Persistence;
+using BackendLoyalty.Infrastructure.Rewards;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
+
+var builder = WebApplication.CreateBuilder(args);
+
+var connectionString = builder.Configuration.GetConnectionString("LoyaltyDb");
+if (string.IsNullOrWhiteSpace(connectionString))
+{
+    throw new InvalidOperationException("ConnectionStrings:LoyaltyDb is required.");
+}
+
+var jwtIssuer = builder.Configuration["Jwt:Issuer"]?.Trim();
+var jwtAudience = builder.Configuration["Jwt:Audience"]?.Trim();
+var jwtSigningKey = builder.Configuration["Jwt:SigningKey"];
+
+if (string.IsNullOrWhiteSpace(jwtIssuer))
+    throw new InvalidOperationException("Jwt:Issuer is required.");
+if (string.IsNullOrWhiteSpace(jwtAudience))
+    throw new InvalidOperationException("Jwt:Audience is required.");
+if (string.IsNullOrWhiteSpace(jwtSigningKey) || Encoding.UTF8.GetByteCount(jwtSigningKey) < 32)
+    throw new InvalidOperationException("Jwt:SigningKey is required and must be at least 32 bytes.");
+
+builder.Services
+    .AddControllers()
+    .ConfigureApiBehaviorOptions(options =>
+    {
+        options.InvalidModelStateResponseFactory = context =>
+        {
+            var details = context.ModelState
+                .Where(x => x.Value?.Errors.Count > 0)
+                .ToDictionary(
+                    x => x.Key,
+                    x => x.Value!.Errors
+                        .Select(error => string.IsNullOrWhiteSpace(error.ErrorMessage)
+                            ? "Invalid value"
+                            : error.ErrorMessage)
+                        .ToArray());
+
+            return new BadRequestObjectResult(
+                ApiResponse<object>.Fail("VALIDATION_ERROR", "Invalid payload", details));
+        };
+    });
+builder.Services.AddOpenApi();
+
+builder.Services.AddDbContext<LoyaltyDbContext>(options =>
+    options.UseNpgsql(connectionString));
+builder.Services.AddDbContext<StandaloneAuthDbContext>(options =>
+    options.UseNpgsql(connectionString));
+
+builder.Services.AddScoped<IMemberScanService, MemberScanService>();
+builder.Services.AddScoped<IMemberSessionResolver, MemberSessionResolver>();
+builder.Services.AddScoped<ILoyaltyStampService, LoyaltyStampService>();
+builder.Services.AddScoped<IRewardRedemptionService, RewardRedemptionService>();
+builder.Services.AddScoped<IMemberRewardTokenService, MemberRewardTokenService>();
+builder.Services.AddScoped<IAuditLogWriter, AuditLogWriter>();
+builder.Services.AddScoped<IStandaloneCredentialService, StandaloneCredentialService>();
+builder.Services.AddScoped<IRefreshTokenSessionService, RefreshTokenSessionService>();
+builder.Services.AddScoped<IBusinessPasswordService, BusinessPasswordService>();
+builder.Services.AddScoped<IAdminPasswordService, AdminPasswordService>();
+builder.Services.AddScoped<IBusinessInvitationService, BusinessInvitationService>();
+builder.Services.AddScoped<IBusinessInvitationManagementService, BusinessInvitationManagementService>();
+builder.Services.AddScoped<IStandaloneInvitationIdentityService, StandaloneInvitationIdentityService>();
+builder.Services.AddHttpClient<ITransactionalEmailSender, ResendTransactionalEmailSender>();
+builder.Services.AddSingleton<ILoyaltyJwtTokenIssuer, LoyaltyJwtTokenIssuer>();
+
+builder.Services
+    .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.MapInboundClaims = false;
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuerSigningKey = true,
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSigningKey)),
+            ValidAlgorithms = [SecurityAlgorithms.HmacSha256],
+            ValidateIssuer = true,
+            ValidIssuer = jwtIssuer,
+            ValidateAudience = true,
+            ValidAudience = jwtAudience,
+            ValidateLifetime = true,
+            ClockSkew = TimeSpan.FromSeconds(30),
+            NameClaimType = "sub",
+            RoleClaimType = "role",
+        };
+        options.Events = new JwtBearerEvents
+        {
+            OnTokenValidated = context =>
+            {
+                var tokenType = context.Principal?.FindFirst(LoyaltyClaims.TokenTypeClaim)?.Value;
+                if (!string.Equals(tokenType, "access", StringComparison.Ordinal))
+                    context.Fail("Only access tokens may call protected APIs.");
+
+                return Task.CompletedTask;
+            },
+        };
+    });
+
+builder.Services.AddAuthorization();
+
+static string RateLimitPartitionKey(HttpContext context)
+{
+    var userId = context.User.FindFirst("sub")?.Value;
+    if (!string.IsNullOrWhiteSpace(userId))
+        return $"user:{userId}";
+
+    return $"ip:{context.Connection.RemoteIpAddress?.ToString() ?? "unknown"}";
+}
+
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.OnRejected = async (context, cancellationToken) =>
+    {
+        if (context.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter))
+            context.HttpContext.Response.Headers["Retry-After"] = Math.Max(1, (int)Math.Ceiling(retryAfter.TotalSeconds)).ToString();
+
+        await context.HttpContext.Response.WriteAsJsonAsync(
+            ApiResponse<object>.Fail("TOO_MANY_REQUESTS", "Too many requests. Please try again later."),
+            cancellationToken);
+    };
+
+    options.AddPolicy("auth-login", httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            RateLimitPartitionKey(httpContext),
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 10,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+                AutoReplenishment = true,
+            }));
+
+    options.AddPolicy("signup", httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            RateLimitPartitionKey(httpContext),
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 5,
+                Window = TimeSpan.FromMinutes(10),
+                QueueLimit = 0,
+                AutoReplenishment = true,
+            }));
+
+    options.AddPolicy("email-action", httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            RateLimitPartitionKey(httpContext),
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 5,
+                Window = TimeSpan.FromMinutes(10),
+                QueueLimit = 0,
+                AutoReplenishment = true,
+            }));
+
+    options.AddPolicy("team-mutation", httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            RateLimitPartitionKey(httpContext),
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 20,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+                AutoReplenishment = true,
+            }));
+});
+
+var allowedOrigins = builder.Configuration
+    .GetSection("Cors:AllowedOrigins")
+    .GetChildren()
+    .Select(x => x.Value)
+    .Where(x => !string.IsNullOrWhiteSpace(x))
+    .Select(x => x!)
+    .ToArray();
+
+builder.Services.AddCors(options =>
+{
+    options.AddDefaultPolicy(policy =>
+    {
+        if (allowedOrigins.Length > 0)
+        {
+            policy.WithOrigins(allowedOrigins)
+                .AllowAnyHeader()
+                .AllowAnyMethod()
+                .AllowCredentials();
+        }
+    });
+});
+
+var app = builder.Build();
+
+app.UseExceptionHandler(errorApp =>
+{
+    errorApp.Run(async context =>
+    {
+        context.Response.StatusCode = StatusCodes.Status500InternalServerError;
+        await context.Response.WriteAsJsonAsync(
+            ApiResponse<object>.Fail("INTERNAL_ERROR", "Internal server error"));
+    });
+});
+
+if (app.Environment.IsDevelopment())
+{
+    app.MapOpenApi();
+}
+
+app.UseCors();
+app.UseAuthentication();
+app.UseRateLimiter();
+app.UseAuthorization();
+app.MapControllers();
+
+app.MapGet("/health", () => Results.Ok(new { status = "ok", service = "backend-loyalty" }));
+app.MapGet("/health/db", async (LoyaltyDbContext db, CancellationToken cancellationToken) =>
+{
+    var canConnect = await db.Database.CanConnectAsync(cancellationToken);
+    return canConnect
+        ? Results.Ok(new { status = "ok", database = "connected" })
+        : Results.Problem("Database connection failed.");
+});
+
+app.Run();

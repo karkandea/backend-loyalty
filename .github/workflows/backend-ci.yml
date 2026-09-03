@@ -1,0 +1,28 @@
+name: Backend CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main, feat/bootstrap-dotnet-api]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        run: dotnet restore BackendLoyalty.sln
+
+      - name: Build
+        run: dotnet build BackendLoyalty.sln --configuration Release --no-restore
+
+      - name: Docker build
+        run: docker build -t backend-loyalty:ci .
