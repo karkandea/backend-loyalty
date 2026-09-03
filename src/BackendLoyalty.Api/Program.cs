@@ -67,11 +67,13 @@ builder.Services.AddDbContext<StandaloneAuthDbContext>(options =>
 
 builder.Services.AddScoped<IMemberScanService, MemberScanService>();
 builder.Services.AddScoped<IMemberSessionResolver, MemberSessionResolver>();
+builder.Services.AddScoped<IMemberAuthService, MemberAuthService>();
 builder.Services.AddScoped<ILoyaltyStampService, LoyaltyStampService>();
 builder.Services.AddScoped<IRewardRedemptionService, RewardRedemptionService>();
 builder.Services.AddScoped<IMemberRewardTokenService, MemberRewardTokenService>();
 builder.Services.AddScoped<IAuditLogWriter, AuditLogWriter>();
 builder.Services.AddScoped<IStandaloneCredentialService, StandaloneCredentialService>();
+builder.Services.AddScoped<IBusinessPortalService, BusinessPortalService>();
 builder.Services.AddScoped<IRefreshTokenSessionService, RefreshTokenSessionService>();
 builder.Services.AddScoped<IBusinessPasswordService, BusinessPasswordService>();
 builder.Services.AddScoped<IAdminPasswordService, AdminPasswordService>();

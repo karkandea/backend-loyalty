@@ -30,6 +30,7 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       ASPNETCORE_URLS: http://+:8080
+      ASPNETCORE_FORWARDEDHEADERS_ENABLED: "true"
       ConnectionStrings__LoyaltyDb: Host=loyalty-postgres;Port=5432;Database=loyalty;Username=loyalty_app;Password=${LOYALTY_DB_PASSWORD:?LOYALTY_DB_PASSWORD is required}
       Jwt__Issuer: ${Jwt__Issuer:-backend-loyalty}
       Jwt__Audience: ${Jwt__Audience:-loyalty-app}
