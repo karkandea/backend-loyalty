@@ -43,13 +43,13 @@ echo "==> [2/8] Owner login selects the single active business..."
 LOGIN="$(request_json POST "$BASE_URL/api/business/auth/login" "{\"email\":\"$OWNER_EMAIL\",\"password\":\"$OWNER_PASSWORD\"}")"
 ACCESS="$(printf '%s' "$LOGIN" | json_get data.accessToken)"
 REFRESH="$(printf '%s' "$LOGIN" | json_get data.refreshToken)"
-LOGIN_STATE="$(printf '%s' "$LOGIN" | python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; print(f"{d[\"businessId\"]}|{d[\"membershipCount\"]}|{d[\"role\"]}")')"
+LOGIN_STATE="$(printf '%s' "$LOGIN" | python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; print("{}|{}|{}".format(d["businessId"], d["membershipCount"], d["role"]))')"
 [[ "$LOGIN_STATE" == "$BUSINESS_ID|1|OWNER" ]] || { echo "ERROR: owner login state invalid: $LOGIN_STATE" >&2; exit 1; }
 echo "PASS: owner login business context works."
 
 echo "==> [3/8] Membership list and refresh rotation preserve business access..."
 MEMBERSHIPS="$(request_json GET "$BASE_URL/api/business/portal/memberships" '' "$ACCESS")"
-MEMBERSHIP_STATE="$(printf '%s' "$MEMBERSHIPS" | python3 -c 'import json,sys; rows=json.load(sys.stdin)["data"]["memberships"]; print(f"{len(rows)}|{rows[0][\"businessId\"]}|{rows[0][\"role\"]}")')"
+MEMBERSHIP_STATE="$(printf '%s' "$MEMBERSHIPS" | python3 -c 'import json,sys; rows=json.load(sys.stdin)["data"]["memberships"]; print("{}|{}|{}".format(len(rows), rows[0]["businessId"], rows[0]["role"]))')"
 [[ "$MEMBERSHIP_STATE" == "1|$BUSINESS_ID|owner" ]] || { echo "ERROR: membership state invalid: $MEMBERSHIP_STATE" >&2; exit 1; }
 ROTATED="$(request_json POST "$BASE_URL/api/auth/refresh" "{\"refreshToken\":\"$REFRESH\"}")"
 ACCESS="$(printf '%s' "$ROTATED" | json_get data.accessToken)"
@@ -59,7 +59,7 @@ echo "PASS: membership list and refresh rotation work."
 
 echo "==> [4/8] Owner summary reads tenant-scoped operational counts..."
 SUMMARY="$(request_json GET "$BASE_URL/api/business/portal/summary" '' "$ACCESS")"
-SUMMARY_STATE="$(printf '%s' "$SUMMARY" | python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; print(f"{d[\"hasCompletedOnboarding\"]}|{d[\"memberCount\"]}|{d[\"activeCardCount\"]}|{d[\"rewardCount\"]}|{d[\"outletCount\"]}|{d[\"teamMemberCount\"]}")')"
+SUMMARY_STATE="$(printf '%s' "$SUMMARY" | python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; print("{}|{}|{}|{}|{}|{}".format(d["hasCompletedOnboarding"], d["memberCount"], d["activeCardCount"], d["rewardCount"], d["outletCount"], d["teamMemberCount"]))')"
 [[ "$SUMMARY_STATE" == 'False|1|2|1|1|1' ]] || { echo "ERROR: owner summary invalid: $SUMMARY_STATE" >&2; exit 1; }
 echo "PASS: business dashboard summary is correct."
 
