@@ -58,7 +58,7 @@ echo "PASS: member login/session issuance works."
 
 echo "==> [3/9] Member summary starts at QA card 0/5..."
 SUMMARY="$(request_json GET "$BASE_URL/api/member/summary" '' '' read)"
-SUMMARY_STATE="$(printf '%s' "$SUMMARY" | python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; c=d["activeCard"]; print(f"{c[\"currentStamps\"]}/{c[\"requiredStamps\"]}|{d[\"member\"][\"memberBarcode\"]}")')"
+SUMMARY_STATE="$(printf '%s' "$SUMMARY" | python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; c=d["activeCard"]; print("{}/{}|{}".format(c["currentStamps"],c["requiredStamps"],d["member"]["memberBarcode"]))')"
 [[ "$SUMMARY_STATE" == '0/5|QA-MEMBER-001' ]] || { echo "ERROR: initial member summary invalid: $SUMMARY_STATE" >&2; exit 1; }
 echo "PASS: member summary is tenant/session scoped."
 
@@ -71,7 +71,7 @@ echo "PASS: POS added exact-boundary stamps."
 
 echo "==> [5/9] Member sees level-up card and available reward..."
 SUMMARY_AFTER="$(request_json GET "$BASE_URL/api/member/summary" '' '' read)"
-AFTER_STATE="$(printf '%s' "$SUMMARY_AFTER" | python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; c=d["activeCard"]; s=d["stats"]; print(f"{c[\"currentStamps\"]}/{c[\"requiredStamps\"]}|{c[\"level\"][\"value\"]}|{s[\"totalVouchersAvailable\"]}")')"
+AFTER_STATE="$(printf '%s' "$SUMMARY_AFTER" | python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; c=d["activeCard"]; s=d["stats"]; print("{}/{}|{}|{}".format(c["currentStamps"],c["requiredStamps"],c["level"]["value"],s["totalVouchersAvailable"]))')"
 [[ "$AFTER_STATE" == '0/3|2|1' ]] || { echo "ERROR: post-stamp member state invalid: $AFTER_STATE" >&2; exit 1; }
 REWARDS="$(request_json GET "$BASE_URL/api/member/rewards?status=AVAILABLE" '' '' read)"
 MEMBER_REWARD_ID="$(printf '%s' "$REWARDS" | json_get data.rewards.0.id)"
@@ -93,7 +93,7 @@ echo "PASS: POS redemption is visible to member portal."
 
 echo "==> [8/9] Member transaction history contains earn + redeem..."
 TRANSACTIONS="$(request_json GET "$BASE_URL/api/member/transactions?limit=10" '' '' read)"
-TX_STATE="$(printf '%s' "$TRANSACTIONS" | python3 -c 'import json,sys; t=[x["type"] for x in json.load(sys.stdin)["data"]["transactions"]]; print(f"{int(\"EARN_STAMP\" in t)}|{int(\"REDEEM_REWARD\" in t)}")')"
+TX_STATE="$(printf '%s' "$TRANSACTIONS" | python3 -c 'import json,sys; t=[x["type"] for x in json.load(sys.stdin)["data"]["transactions"]]; print("{}|{}".format(int("EARN_STAMP" in t),int("REDEEM_REWARD" in t)))')"
 [[ "$TX_STATE" == '1|1' ]] || { echo "ERROR: member transaction parity invalid: $TX_STATE" >&2; exit 1; }
 echo "PASS: member history includes earn and redeem."
 
