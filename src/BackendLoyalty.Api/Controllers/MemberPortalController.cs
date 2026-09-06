@@ -1,5 +1,6 @@
 using System.Data;
 using System.Data.Common;
+using System.Text.Json;
 using BackendLoyalty.Api.Contracts;
 using BackendLoyalty.Application.Members;
 using BackendLoyalty.Infrastructure.Persistence;
@@ -443,7 +444,7 @@ public sealed class MemberPortalController(
                 NullableString(reader, 11),
                 NullableString(reader, 12),
                 NullableString(reader, 13),
-                reader.IsDBNull(14) ? Array.Empty<string>() : reader.GetFieldValue<string[]>(14));
+                ReadHowItWorksSteps(reader, 14));
         }
         catch (DbException)
         {
@@ -454,6 +455,41 @@ public sealed class MemberPortalController(
             if (shouldClose && connection.State == ConnectionState.Open)
                 await connection.CloseAsync();
         }
+    }
+
+
+    private static string[] ReadHowItWorksSteps(DbDataReader reader, int ordinal)
+    {
+        if (reader.IsDBNull(ordinal))
+            return Array.Empty<string>();
+
+        var value = reader.GetValue(ordinal);
+        if (value is string[] array)
+            return array;
+
+        if (value is string json)
+        {
+            try
+            {
+                return JsonSerializer.Deserialize<string[]>(json) ?? Array.Empty<string>();
+            }
+            catch (JsonException)
+            {
+                return string.IsNullOrWhiteSpace(json) ? Array.Empty<string>() : new[] { json };
+            }
+        }
+
+        if (value is Array values)
+        {
+            return values
+                .Cast<object?>()
+                .Select(item => Convert.ToString(item))
+                .Where(item => !string.IsNullOrWhiteSpace(item))
+                .Select(item => item!)
+                .ToArray();
+        }
+
+        return Array.Empty<string>();
     }
 
     private static string? NullableString(DbDataReader reader, int ordinal) =>
