@@ -1,3 +1,6 @@
+using System.Data;
+using System.Data.Common;
+using System.Text.Json;
 using BackendLoyalty.Api.Contracts;
 using BackendLoyalty.Application.Members;
 using BackendLoyalty.Infrastructure.Persistence;
@@ -31,6 +34,8 @@ public sealed class MemberPortalController(
 
         var business = await authDb.Businesses.AsNoTracking()
             .SingleOrDefaultAsync(x => x.Id == session.BusinessId, cancellationToken);
+        var memberVisual = await ReadMemberVisualAsync(session.BusinessId, session.MemberId, cancellationToken);
+        var businessVisual = await ReadBusinessVisualAsync(session.BusinessId, cancellationToken);
 
         var activeCard = await (
             from memberCard in loyaltyDb.MemberCards.AsNoTracking()
@@ -74,6 +79,7 @@ public sealed class MemberPortalController(
                 .ToListAsync(cancellationToken);
 
             var rewardMilestone = milestones.LastOrDefault();
+            var cardVisual = await ReadCardVisualAsync(session.BusinessId, activeCard.CardId, cancellationToken);
             activeCardPayload = new
             {
                 cardId = activeCard.CardId,
@@ -89,6 +95,19 @@ public sealed class MemberPortalController(
                 rewardStamp = rewardMilestone is null
                     ? null
                     : new { label = rewardMilestone.rewardName ?? rewardMilestone.title, position = rewardMilestone.stampCount },
+                backgroundColor = cardVisual?.BackgroundColorHex,
+                backgroundImageUrl = cardVisual?.BackgroundImageUrl,
+                backgroundCss = cardVisual?.BackgroundCss,
+                backgroundCssSize = cardVisual?.BackgroundCssSize,
+                overlayEnabled = cardVisual?.OverlayEnabled ?? false,
+                overlayOpacity = cardVisual?.OverlayOpacity,
+                overlayColor = cardVisual?.OverlayColor,
+                cornerRadius = cardVisual?.CornerRadius,
+                stampColor = cardVisual?.StampFillColorHex,
+                inactiveStampColor = cardVisual?.InactiveStampColorHex,
+                iconUrl = cardVisual?.StampIconUrl,
+                logoUrl = cardVisual?.LogoUrl,
+                titleColorHex = cardVisual?.TitleColorHex,
                 milestones,
             };
         }
@@ -123,11 +142,24 @@ public sealed class MemberPortalController(
                 memberName = member.Name,
                 memberEmail = member.Email,
                 memberBarcode = member.MemberBarcode,
+                phone = memberVisual?.Phone ?? member.Phone,
+                avatarUrl = memberVisual?.AvatarUrl,
+                emailVerifiedAt = memberVisual?.EmailVerifiedAt,
             },
             business = business is null
                 ? null
-                : new { id = business.Id, name = business.Name, slug = business.Slug },
+                : new
+                {
+                    id = business.Id,
+                    name = business.Name,
+                    slug = business.Slug,
+                    logoUrl = businessVisual?.LogoUrl,
+                    brandPrimaryColor = businessVisual?.BrandPrimaryColor,
+                },
             activeCard = activeCardPayload,
+            program = activeCard is null
+                ? new { howItWorks = Array.Empty<object>(), termsAndConditions = (string?)null }
+                : await BuildProgramAsync(session.BusinessId, activeCard.CardId, cancellationToken),
             stats = new
             {
                 totalStampsEarned,
@@ -252,6 +284,243 @@ public sealed class MemberPortalController(
 
         return Ok(ApiResponse<object>.Ok(new { rewards = payload }));
     }
+
+    private async Task<object> BuildProgramAsync(
+        string businessId,
+        string cardId,
+        CancellationToken cancellationToken)
+    {
+        var visual = await ReadCardVisualAsync(businessId, cardId, cancellationToken);
+        var steps = (visual?.HowItWorksSteps ?? Array.Empty<string>())
+            .Select((text, index) => new { number = index + 1, text })
+            .ToArray();
+        return new
+        {
+            howItWorks = steps,
+            termsAndConditions = visual?.TermsAndConditions,
+        };
+    }
+
+    private async Task<MemberVisual?> ReadMemberVisualAsync(
+        string businessId,
+        string memberId,
+        CancellationToken cancellationToken)
+    {
+        var connection = loyaltyDb.Database.GetDbConnection();
+        var shouldClose = connection.State != ConnectionState.Open;
+        try
+        {
+            if (shouldClose)
+                await connection.OpenAsync(cancellationToken);
+
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT m.phone,
+                       m."AvatarUrl",
+                       mi."verifiedAt"
+                FROM "Member" m
+                LEFT JOIN "MemberIdentity" mi
+                  ON mi."businessId" = m."businessId"
+                 AND mi."memberId" = m.id
+                WHERE m.id = @memberId
+                  AND m."businessId" = @businessId
+                LIMIT 1
+                """;
+            AddParameter(command, "memberId", memberId);
+            AddParameter(command, "businessId", businessId);
+
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            if (!await reader.ReadAsync(cancellationToken))
+                return null;
+
+            return new MemberVisual(
+                NullableString(reader, 0),
+                NullableString(reader, 1),
+                reader.IsDBNull(2) ? null : reader.GetFieldValue<DateTime>(2));
+        }
+        catch (DbException)
+        {
+            return null;
+        }
+        finally
+        {
+            if (shouldClose && connection.State == ConnectionState.Open)
+                await connection.CloseAsync();
+        }
+    }
+
+    private async Task<BusinessVisual?> ReadBusinessVisualAsync(
+        string businessId,
+        CancellationToken cancellationToken)
+    {
+        var connection = authDb.Database.GetDbConnection();
+        var shouldClose = connection.State != ConnectionState.Open;
+        try
+        {
+            if (shouldClose)
+                await connection.OpenAsync(cancellationToken);
+
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT "logoUrl", "brandPrimaryColor"
+                FROM "Business"
+                WHERE id = @businessId
+                LIMIT 1
+                """;
+            AddParameter(command, "businessId", businessId);
+
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            if (!await reader.ReadAsync(cancellationToken))
+                return null;
+
+            return new BusinessVisual(
+                NullableString(reader, 0),
+                NullableString(reader, 1));
+        }
+        catch (DbException)
+        {
+            return null;
+        }
+        finally
+        {
+            if (shouldClose && connection.State == ConnectionState.Open)
+                await connection.CloseAsync();
+        }
+    }
+
+    private async Task<CardVisual?> ReadCardVisualAsync(
+        string businessId,
+        string cardId,
+        CancellationToken cancellationToken)
+    {
+        var connection = loyaltyDb.Database.GetDbConnection();
+        var shouldClose = connection.State != ConnectionState.Open;
+        try
+        {
+            if (shouldClose)
+                await connection.OpenAsync(cancellationToken);
+
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT "termsAndConditions",
+                       "backgroundColorHex",
+                       "backgroundImageUrl",
+                       "backgroundCss",
+                       "backgroundCssSize",
+                       "overlayEnabled",
+                       "overlayOpacity",
+                       "overlayColor",
+                       "cornerRadius",
+                       "stampFillColorHex",
+                       "inactiveStampColorHex",
+                       "stampIconUrl",
+                       "logoUrl",
+                       "titleColorHex",
+                       "howItWorksSteps"
+                FROM "Card"
+                WHERE id = @cardId
+                  AND "businessId" = @businessId
+                LIMIT 1
+                """;
+            AddParameter(command, "cardId", cardId);
+            AddParameter(command, "businessId", businessId);
+
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            if (!await reader.ReadAsync(cancellationToken))
+                return null;
+
+            return new CardVisual(
+                NullableString(reader, 0),
+                NullableString(reader, 1),
+                NullableString(reader, 2),
+                NullableString(reader, 3),
+                NullableString(reader, 4),
+                reader.IsDBNull(5) ? null : reader.GetFieldValue<bool>(5),
+                reader.IsDBNull(6) ? null : Convert.ToDecimal(reader.GetValue(6)),
+                NullableString(reader, 7),
+                reader.IsDBNull(8) ? null : Convert.ToInt32(reader.GetValue(8)),
+                NullableString(reader, 9),
+                NullableString(reader, 10),
+                NullableString(reader, 11),
+                NullableString(reader, 12),
+                NullableString(reader, 13),
+                ReadHowItWorksSteps(reader, 14));
+        }
+        catch (DbException)
+        {
+            return null;
+        }
+        finally
+        {
+            if (shouldClose && connection.State == ConnectionState.Open)
+                await connection.CloseAsync();
+        }
+    }
+
+
+    private static string[] ReadHowItWorksSteps(DbDataReader reader, int ordinal)
+    {
+        if (reader.IsDBNull(ordinal))
+            return Array.Empty<string>();
+
+        var value = reader.GetValue(ordinal);
+        if (value is string[] array)
+            return array;
+
+        if (value is string json)
+        {
+            try
+            {
+                return JsonSerializer.Deserialize<string[]>(json) ?? Array.Empty<string>();
+            }
+            catch (JsonException)
+            {
+                return string.IsNullOrWhiteSpace(json) ? Array.Empty<string>() : new[] { json };
+            }
+        }
+
+        if (value is Array values)
+        {
+            return values
+                .Cast<object?>()
+                .Select(item => Convert.ToString(item))
+                .Where(item => !string.IsNullOrWhiteSpace(item))
+                .Select(item => item!)
+                .ToArray();
+        }
+
+        return Array.Empty<string>();
+    }
+
+    private static string? NullableString(DbDataReader reader, int ordinal) =>
+        reader.IsDBNull(ordinal) ? null : reader.GetString(ordinal);
+
+    private static void AddParameter(DbCommand command, string name, object value)
+    {
+        var parameter = command.CreateParameter();
+        parameter.ParameterName = name;
+        parameter.Value = value;
+        command.Parameters.Add(parameter);
+    }
+
+    private sealed record MemberVisual(string? Phone, string? AvatarUrl, DateTime? EmailVerifiedAt);
+    private sealed record BusinessVisual(string? LogoUrl, string? BrandPrimaryColor);
+    private sealed record CardVisual(
+        string? TermsAndConditions,
+        string? BackgroundColorHex,
+        string? BackgroundImageUrl,
+        string? BackgroundCss,
+        string? BackgroundCssSize,
+        bool? OverlayEnabled,
+        decimal? OverlayOpacity,
+        string? OverlayColor,
+        int? CornerRadius,
+        string? StampFillColorHex,
+        string? InactiveStampColorHex,
+        string? StampIconUrl,
+        string? LogoUrl,
+        string? TitleColorHex,
+        string[] HowItWorksSteps);
 
     private Task<MemberSessionContext?> ResolveSessionAsync(CancellationToken cancellationToken) =>
         memberSessionResolver.ResolveAsync(Request.Cookies[MemberSessionCookie], cancellationToken);
