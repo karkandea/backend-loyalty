@@ -40,6 +40,7 @@ services:
       Cors__AllowedOrigins__0: ${Cors__AllowedOrigins__0:-http://localhost:5173}
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       RESEND_FROM: "${RESEND_FROM:-Dualangka <noreply@dualangka.com>}"
+      PUBLIC_APP_BASE_URL: ${PUBLIC_APP_BASE_URL:-https://loyalty.dualangka.com}
       EMAIL_CONFIRM_BASE_DOMAIN: ${EMAIL_CONFIRM_BASE_DOMAIN:-dualangka.com}
     ports:
       - "127.0.0.1:${LOYALTY_API_PORT:-5092}:8080"
