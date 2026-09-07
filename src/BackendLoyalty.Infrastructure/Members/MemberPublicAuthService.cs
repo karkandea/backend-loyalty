@@ -12,6 +12,9 @@ public sealed class MemberPublicAuthService(
     StandaloneAuthDbContext authDb) : IMemberPublicAuthService
 {
     private static readonly TimeSpan ResetLifetime = TimeSpan.FromMinutes(45);
+    private static readonly TimeSpan EmailOtpLifetime = TimeSpan.FromMinutes(15);
+    private static readonly TimeSpan EmailOtpResendCooldown = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan EmailOtpExpiryGrace = TimeSpan.FromSeconds(30);
 
     public async Task<MemberRegistrationResult> RegisterAsync(
         MemberRegistrationRequest request,
@@ -107,6 +110,167 @@ public sealed class MemberPublicAuthService(
             barcode,
             false,
             "Registrasi berhasil. Silakan login menggunakan email Anda.");
+    }
+
+    public async Task<MemberEmailOtpSendResult> SendEmailVerificationOtpAsync(
+        string email,
+        string? businessSlug,
+        string deviceId,
+        CancellationToken cancellationToken = default)
+    {
+        var business = await ResolveBusinessAsync(null, businessSlug, cancellationToken);
+        var normalizedEmail = email.Trim().ToLowerInvariant();
+        var normalizedDeviceId = deviceId.Trim();
+        var identity = await LoadIdentityEmailStateAsync(
+            business.Id,
+            normalizedEmail,
+            cancellationToken);
+
+        if (identity is null)
+        {
+            throw new MemberPublicAuthException(
+                MemberPublicAuthErrorCode.MemberNotFound,
+                "Akun tidak ditemukan. Silakan daftar terlebih dahulu.");
+        }
+
+        if (identity.VerifiedAt.HasValue)
+            return new MemberEmailOtpSendResult(MemberEmailOtpSendStatus.AlreadyVerified, null);
+
+        var now = DateTime.UtcNow;
+        var latest = await LoadLatestEmailVerificationAsync(
+            business.Id,
+            identity.MemberId,
+            cancellationToken);
+
+        if (latest is not null &&
+            latest.UsedAt is null &&
+            now - latest.CreatedAt < EmailOtpResendCooldown)
+        {
+            throw new MemberPublicAuthException(
+                MemberPublicAuthErrorCode.TooManyRequests,
+                "Tunggu sebentar sebelum meminta OTP lagi.");
+        }
+
+        var otp = GenerateOtpCode();
+        var sessionId = Guid.NewGuid().ToString();
+        var expiresAt = now + EmailOtpLifetime;
+        var otpHash = HashEmailOtp(
+            business.Id,
+            identity.MemberId,
+            normalizedEmail,
+            normalizedDeviceId,
+            otp);
+
+        await using var transaction = await loyaltyDb.Database.BeginTransactionAsync(cancellationToken);
+
+        await loyaltyDb.Database.ExecuteSqlInterpolatedAsync($"""
+            DELETE FROM "MemberEmailVerification"
+            WHERE "businessId" = {business.Id}
+              AND "memberId" = {identity.MemberId}
+              AND "usedAt" IS NULL
+            """, cancellationToken);
+
+        await loyaltyDb.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO "MemberEmailVerification"
+                ("id", "businessId", "memberId", "tokenHash", "expiresAt", "usedAt", "createdAt")
+            VALUES
+                ({sessionId}, {business.Id}, {identity.MemberId}, {otpHash}, {expiresAt}, NULL, {now})
+            """, cancellationToken);
+
+        await transaction.CommitAsync(cancellationToken);
+
+        return new MemberEmailOtpSendResult(
+            MemberEmailOtpSendStatus.Issued,
+            new MemberEmailOtpIssue(
+                identity.MemberId,
+                business.Id,
+                business.Slug,
+                normalizedEmail,
+                sessionId,
+                otp,
+                expiresAt));
+    }
+
+    public async Task<MemberEmailOtpVerifyResult> VerifyEmailVerificationOtpAsync(
+        string email,
+        string otp,
+        string otpSessionId,
+        string? businessSlug,
+        string deviceId,
+        CancellationToken cancellationToken = default)
+    {
+        var business = await ResolveBusinessAsync(null, businessSlug, cancellationToken);
+        var normalizedEmail = email.Trim().ToLowerInvariant();
+        var normalizedDeviceId = deviceId.Trim();
+        var identity = await LoadIdentityEmailStateAsync(
+            business.Id,
+            normalizedEmail,
+            cancellationToken);
+
+        if (identity is null)
+            return MemberEmailOtpVerifyResult.NotFound;
+
+        var session = await LoadEmailVerificationAsync(
+            otpSessionId,
+            business.Id,
+            identity.MemberId,
+            cancellationToken);
+
+        if (session is null)
+            return MemberEmailOtpVerifyResult.NotFound;
+        if (session.UsedAt.HasValue)
+            return MemberEmailOtpVerifyResult.AlreadyUsed;
+
+        var now = DateTime.UtcNow;
+        if (session.ExpiresAt + EmailOtpExpiryGrace < now)
+            return MemberEmailOtpVerifyResult.Expired;
+
+        var expectedHash = HashEmailOtp(
+            business.Id,
+            identity.MemberId,
+            normalizedEmail,
+            normalizedDeviceId,
+            otp);
+
+        if (!FixedTimeHexEquals(expectedHash, session.TokenHash))
+            return MemberEmailOtpVerifyResult.Invalid;
+
+        await using var transaction = await loyaltyDb.Database.BeginTransactionAsync(cancellationToken);
+
+        var consumed = await loyaltyDb.Database.ExecuteSqlInterpolatedAsync($"""
+            UPDATE "MemberEmailVerification"
+            SET "usedAt" = {now}
+            WHERE "id" = {session.Id}
+              AND "businessId" = {business.Id}
+              AND "memberId" = {identity.MemberId}
+              AND "tokenHash" = {expectedHash}
+              AND "usedAt" IS NULL
+              AND "expiresAt" > {now - EmailOtpExpiryGrace}
+            """, cancellationToken);
+
+        if (consumed != 1)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return MemberEmailOtpVerifyResult.AlreadyUsed;
+        }
+
+        var verified = await loyaltyDb.Database.ExecuteSqlInterpolatedAsync($"""
+            UPDATE "MemberIdentity"
+            SET "verifiedAt" = COALESCE("verifiedAt", {now}),
+                "updatedAt" = {now}
+            WHERE "businessId" = {business.Id}
+              AND "memberId" = {identity.MemberId}
+              AND lower("email") = {normalizedEmail}
+            """, cancellationToken);
+
+        if (verified != 1)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return MemberEmailOtpVerifyResult.NotFound;
+        }
+
+        await transaction.CommitAsync(cancellationToken);
+        return MemberEmailOtpVerifyResult.Success;
     }
 
     public async Task<MemberPasswordResetIssue?> CreatePasswordResetAsync(
@@ -335,6 +499,128 @@ public sealed class MemberPublicAuthService(
         }
     }
 
+    private async Task<IdentityEmailState?> LoadIdentityEmailStateAsync(
+        string businessId,
+        string normalizedEmail,
+        CancellationToken cancellationToken)
+    {
+        var connection = loyaltyDb.Database.GetDbConnection();
+        var closeAfter = connection.State != ConnectionState.Open;
+        if (closeAfter)
+            await connection.OpenAsync(cancellationToken);
+
+        try
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT "memberId", "verifiedAt"
+                FROM "MemberIdentity"
+                WHERE "businessId" = @businessId
+                  AND lower("email") = @email
+                LIMIT 1
+                """;
+            AddParameter(command, "@businessId", businessId);
+            AddParameter(command, "@email", normalizedEmail);
+
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            if (!await reader.ReadAsync(cancellationToken))
+                return null;
+
+            return new IdentityEmailState(
+                reader.GetString(0),
+                reader.IsDBNull(1) ? null : reader.GetDateTime(1));
+        }
+        finally
+        {
+            if (closeAfter)
+                await connection.CloseAsync();
+        }
+    }
+
+    private async Task<EmailVerificationRow?> LoadLatestEmailVerificationAsync(
+        string businessId,
+        string memberId,
+        CancellationToken cancellationToken)
+    {
+        var connection = loyaltyDb.Database.GetDbConnection();
+        var closeAfter = connection.State != ConnectionState.Open;
+        if (closeAfter)
+            await connection.OpenAsync(cancellationToken);
+
+        try
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT "id", "tokenHash", "expiresAt", "usedAt", "createdAt"
+                FROM "MemberEmailVerification"
+                WHERE "businessId" = @businessId
+                  AND "memberId" = @memberId
+                ORDER BY "createdAt" DESC
+                LIMIT 1
+                """;
+            AddParameter(command, "@businessId", businessId);
+            AddParameter(command, "@memberId", memberId);
+
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            if (!await reader.ReadAsync(cancellationToken))
+                return null;
+
+            return ReadEmailVerification(reader);
+        }
+        finally
+        {
+            if (closeAfter)
+                await connection.CloseAsync();
+        }
+    }
+
+    private async Task<EmailVerificationRow?> LoadEmailVerificationAsync(
+        string id,
+        string businessId,
+        string memberId,
+        CancellationToken cancellationToken)
+    {
+        var connection = loyaltyDb.Database.GetDbConnection();
+        var closeAfter = connection.State != ConnectionState.Open;
+        if (closeAfter)
+            await connection.OpenAsync(cancellationToken);
+
+        try
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT "id", "tokenHash", "expiresAt", "usedAt", "createdAt"
+                FROM "MemberEmailVerification"
+                WHERE "id" = @id
+                  AND "businessId" = @businessId
+                  AND "memberId" = @memberId
+                LIMIT 1
+                """;
+            AddParameter(command, "@id", id);
+            AddParameter(command, "@businessId", businessId);
+            AddParameter(command, "@memberId", memberId);
+
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            if (!await reader.ReadAsync(cancellationToken))
+                return null;
+
+            return ReadEmailVerification(reader);
+        }
+        finally
+        {
+            if (closeAfter)
+                await connection.CloseAsync();
+        }
+    }
+
+    private static EmailVerificationRow ReadEmailVerification(System.Data.Common.DbDataReader reader) =>
+        new(
+            reader.GetString(0),
+            reader.GetString(1),
+            reader.GetDateTime(2),
+            reader.IsDBNull(3) ? null : reader.GetDateTime(3),
+            reader.GetDateTime(4));
+
     private async Task<int?> LoadMaxMembersAsync(
         string businessId,
         CancellationToken cancellationToken)
@@ -405,6 +691,31 @@ public sealed class MemberPublicAuthService(
         }
     }
 
+    private static string GenerateOtpCode() =>
+        RandomNumberGenerator.GetInt32(0, 1_000_000).ToString("D6");
+
+    private static string HashEmailOtp(
+        string businessId,
+        string memberId,
+        string email,
+        string deviceId,
+        string otp) =>
+        HashToken($"{businessId}|{memberId}|{email}|{deviceId}|{otp}");
+
+    private static bool FixedTimeHexEquals(string left, string right)
+    {
+        try
+        {
+            return CryptographicOperations.FixedTimeEquals(
+                Convert.FromHexString(left),
+                Convert.FromHexString(right));
+        }
+        catch (FormatException)
+        {
+            return false;
+        }
+    }
+
     private static string CreateMemberBarcode(string businessId)
     {
         var prefix = businessId.Replace("-", string.Empty, StringComparison.Ordinal)
@@ -460,5 +771,12 @@ public sealed class MemberPublicAuthService(
         command.Parameters.Add(parameter);
     }
 
+    private sealed record IdentityEmailState(string MemberId, DateTime? VerifiedAt);
+    private sealed record EmailVerificationRow(
+        string Id,
+        string TokenHash,
+        DateTime ExpiresAt,
+        DateTime? UsedAt,
+        DateTime CreatedAt);
     private sealed record ResetRow(string Id, string MemberId, string BusinessId);
 }
