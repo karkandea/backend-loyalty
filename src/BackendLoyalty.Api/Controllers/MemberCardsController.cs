@@ -1,5 +1,6 @@
 using System.Data;
 using System.Data.Common;
+using System.Text.Json;
 using BackendLoyalty.Api.Contracts;
 using BackendLoyalty.Application.Members;
 using BackendLoyalty.Infrastructure.Persistence;
@@ -43,6 +44,7 @@ public sealed class MemberCardsController(
 
         var business = await authDb.Businesses.AsNoTracking()
             .SingleOrDefaultAsync(x => x.Id == session.BusinessId, cancellationToken);
+        var businessVisual = await ReadBusinessVisualAsync(session.BusinessId, cancellationToken);
 
         var cards = new List<object>(rows.Count);
         foreach (var row in rows)
@@ -59,11 +61,11 @@ public sealed class MemberCardsController(
                 name = row.Card.Name,
                 currentStamps = Math.Max(row.MemberCard.CurrentStamps, 0),
                 requiredStamps = Math.Max(row.Card.RequiredStamps, 1),
-                backgroundColor = visual?.BackgroundColorHex,
+                backgroundColor = visual?.BackgroundColorHex ?? businessVisual?.BrandPrimaryColor ?? "#111827",
                 backgroundImageUrl = visual?.BackgroundImageUrl,
-                stampFillColor = visual?.StampFillColorHex,
+                stampFillColor = visual?.StampFillColorHex ?? "#f97316",
                 stampIconUrl = visual?.StampIconUrl,
-                logoUrl = visual?.LogoUrl,
+                logoUrl = visual?.LogoUrl ?? businessVisual?.LogoUrl,
                 titleColorHex = visual?.TitleColorHex,
                 level = row.Card.Level,
                 cardStatus = row.Card.Status,
@@ -295,6 +297,18 @@ public sealed class MemberCardsController(
         var value = reader.GetValue(ordinal);
         if (value is string[] array)
             return array;
+
+        if (value is string json)
+        {
+            try
+            {
+                return JsonSerializer.Deserialize<string[]>(json) ?? Array.Empty<string>();
+            }
+            catch (JsonException)
+            {
+                return string.IsNullOrWhiteSpace(json) ? Array.Empty<string>() : new[] { json };
+            }
+        }
 
         if (value is Array values)
         {
