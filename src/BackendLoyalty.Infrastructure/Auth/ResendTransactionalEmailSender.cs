@@ -57,6 +57,22 @@ public sealed class ResendTransactionalEmailSender(
             cancellationToken);
     }
 
+    public Task<bool> SendMemberVerificationOtpAsync(
+        string recipient,
+        string otpCode,
+        int expiresInMinutes,
+        CancellationToken cancellationToken)
+    {
+        var safeOtp = WebUtility.HtmlEncode(otpCode);
+        return SendAsync(
+            recipient,
+            "Kode OTP verifikasi email",
+            $"<p>Halo,</p><p>Kode OTP Anda: <strong>{safeOtp}</strong></p><p>Berlaku {expiresInMinutes} menit.</p><p>Jika Anda tidak meminta kode ini, abaikan email ini.</p>",
+            $"Kode OTP: {otpCode}\nBerlaku {expiresInMinutes} menit.",
+            "member-email-verification",
+            cancellationToken);
+    }
+
     public Task<bool> SendBusinessInvitationAsync(
         string recipient,
         string businessName,
