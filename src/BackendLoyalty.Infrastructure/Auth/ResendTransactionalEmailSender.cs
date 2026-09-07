@@ -42,6 +42,37 @@ public sealed class ResendTransactionalEmailSender(
             cancellationToken);
     }
 
+    public Task<bool> SendMemberPasswordResetAsync(
+        string recipient,
+        string resetUrl,
+        CancellationToken cancellationToken)
+    {
+        var safeUrl = WebUtility.HtmlEncode(resetUrl);
+        return SendAsync(
+            recipient,
+            "Reset kata sandi akun member Anda",
+            $"<p>Halo,</p><p>Kami menerima permintaan reset kata sandi untuk akun member Anda.</p><p><a href=\"{safeUrl}\">Klik di sini untuk reset kata sandi</a></p><p>Jika Anda tidak meminta ini, abaikan email ini.</p>",
+            $"Halo,\n\nKami menerima permintaan reset kata sandi untuk akun member Anda.\nReset link: {resetUrl}\n\nJika Anda tidak meminta ini, abaikan email ini.",
+            "member-password-reset",
+            cancellationToken);
+    }
+
+    public Task<bool> SendMemberVerificationOtpAsync(
+        string recipient,
+        string otpCode,
+        int expiresInMinutes,
+        CancellationToken cancellationToken)
+    {
+        var safeOtp = WebUtility.HtmlEncode(otpCode);
+        return SendAsync(
+            recipient,
+            "Kode OTP verifikasi email",
+            $"<p>Halo,</p><p>Kode OTP Anda: <strong>{safeOtp}</strong></p><p>Berlaku {expiresInMinutes} menit.</p><p>Jika Anda tidak meminta kode ini, abaikan email ini.</p>",
+            $"Kode OTP: {otpCode}\nBerlaku {expiresInMinutes} menit.",
+            "member-email-verification",
+            cancellationToken);
+    }
+
     public Task<bool> SendBusinessInvitationAsync(
         string recipient,
         string businessName,
