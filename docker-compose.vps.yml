@@ -41,6 +41,7 @@ services:
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       RESEND_FROM: "${RESEND_FROM:-Dualangka <noreply@dualangka.com>}"
       EMAIL_CONFIRM_BASE_DOMAIN: ${EMAIL_CONFIRM_BASE_DOMAIN:-dualangka.com}
+      GoogleOAuth__ClientId: ${GOOGLE_OAUTH_CLIENT_ID:-}
     ports:
       - "127.0.0.1:${LOYALTY_API_PORT:-5092}:8080"
     networks:
