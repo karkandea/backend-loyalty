@@ -39,4 +39,14 @@ public interface IMemberAuthService
     Task<bool> LogoutAsync(
         string? sessionToken,
         CancellationToken cancellationToken = default);
+
+    Task ChangePasswordAsync(
+        string? sessionToken,
+        string? currentPassword,
+        string? newPassword,
+        CancellationToken cancellationToken = default);
+
+    Task DeleteAccountAsync(
+        string? sessionToken,
+        CancellationToken cancellationToken = default);
 }

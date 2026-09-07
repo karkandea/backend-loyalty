@@ -62,19 +62,7 @@ public sealed class MemberAuthController(IMemberAuthService memberAuth) : Contro
         }
         catch (MemberAuthException exception)
         {
-            return exception.Code switch
-            {
-                MemberAuthErrorCode.InvalidCredentials => Unauthorized(
-                    ApiResponse<object>.Fail("UNAUTHORIZED", exception.Message)),
-                MemberAuthErrorCode.BusinessContextRequired or MemberAuthErrorCode.BusinessNotFound => BadRequest(
-                    ApiResponse<object>.Fail("VALIDATION_ERROR", exception.Message)),
-                MemberAuthErrorCode.BusinessInactive or MemberAuthErrorCode.AccountLocked => StatusCode(
-                    StatusCodes.Status403Forbidden,
-                    ApiResponse<object>.Fail("FORBIDDEN", exception.Message)),
-                _ => StatusCode(
-                    StatusCodes.Status500InternalServerError,
-                    ApiResponse<object>.Fail("INTERNAL_ERROR", "Internal server error")),
-            };
+            return MapAuthException(exception);
         }
     }
 
@@ -83,6 +71,65 @@ public sealed class MemberAuthController(IMemberAuthService memberAuth) : Contro
     {
         var token = Request.Cookies[MemberSessionCookie];
         await memberAuth.LogoutAsync(token, cancellationToken);
+        DeleteMemberSessionCookie();
+
+        return Ok(ApiResponse<object>.Ok(new { loggedOut = true }));
+    }
+
+    [EnableRateLimiting("auth-login")]
+    [HttpPost("update-password")]
+    public async Task<IActionResult> UpdatePassword(
+        [FromBody] MemberUpdatePasswordRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(request.CurrentPassword)
+            || string.IsNullOrWhiteSpace(request.NewPassword)
+            || request.NewPassword.Length is < 8 or > 128)
+        {
+            return BadRequest(ApiResponse<object>.Fail(
+                "VALIDATION_ERROR",
+                "Password baru harus terdiri dari 8-128 karakter."));
+        }
+
+        try
+        {
+            await memberAuth.ChangePasswordAsync(
+                Request.Cookies[MemberSessionCookie],
+                request.CurrentPassword,
+                request.NewPassword,
+                cancellationToken);
+            DeleteMemberSessionCookie();
+
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                message = "Kata sandi berhasil diubah. Silakan login kembali.",
+            }));
+        }
+        catch (MemberAuthException exception)
+        {
+            return MapAuthException(exception);
+        }
+    }
+
+    private IActionResult MapAuthException(MemberAuthException exception)
+    {
+        return exception.Code switch
+        {
+            MemberAuthErrorCode.InvalidCredentials => Unauthorized(
+                ApiResponse<object>.Fail("UNAUTHORIZED", exception.Message)),
+            MemberAuthErrorCode.BusinessContextRequired or MemberAuthErrorCode.BusinessNotFound => BadRequest(
+                ApiResponse<object>.Fail("VALIDATION_ERROR", exception.Message)),
+            MemberAuthErrorCode.BusinessInactive or MemberAuthErrorCode.AccountLocked => StatusCode(
+                StatusCodes.Status403Forbidden,
+                ApiResponse<object>.Fail("FORBIDDEN", exception.Message)),
+            _ => StatusCode(
+                StatusCodes.Status500InternalServerError,
+                ApiResponse<object>.Fail("INTERNAL_ERROR", "Internal server error")),
+        };
+    }
+
+    private void DeleteMemberSessionCookie()
+    {
         Response.Cookies.Delete(
             MemberSessionCookie,
             new CookieOptions
@@ -92,8 +139,6 @@ public sealed class MemberAuthController(IMemberAuthService memberAuth) : Contro
                 Secure = Request.IsHttps,
                 Path = "/",
             });
-
-        return Ok(ApiResponse<object>.Ok(new { loggedOut = true }));
     }
 
     private string? GetClientIp()
@@ -118,4 +163,10 @@ public sealed class MemberLoginRequest
     public string? Password { get; init; }
     public string? BusinessId { get; init; }
     public string? BusinessSlug { get; init; }
+}
+
+public sealed class MemberUpdatePasswordRequest
+{
+    public string? CurrentPassword { get; init; }
+    public string? NewPassword { get; init; }
 }

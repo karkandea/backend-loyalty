@@ -45,7 +45,7 @@ public sealed class MemberAuthService(
         if (!business.IsActive)
             throw new MemberAuthException(MemberAuthErrorCode.BusinessInactive, "Business is inactive");
 
-        var identity = await LoadIdentityAsync(business.Id, normalizedEmail, cancellationToken);
+        var identity = await LoadIdentityByEmailAsync(business.Id, normalizedEmail, cancellationToken);
         if (identity is null)
             throw InvalidCredentials();
 
@@ -118,7 +118,128 @@ public sealed class MemberAuthService(
         return true;
     }
 
-    private async Task<IdentityRow?> LoadIdentityAsync(
+    public async Task ChangePasswordAsync(
+        string? sessionToken,
+        string? currentPassword,
+        string? newPassword,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(currentPassword)
+            || string.IsNullOrWhiteSpace(newPassword)
+            || newPassword.Length is < 8 or > 128)
+        {
+            throw new MemberAuthException(MemberAuthErrorCode.InvalidCredentials, "Invalid password payload");
+        }
+
+        var sessionIdentity = await LoadSessionIdentityAsync(sessionToken, cancellationToken);
+        if (sessionIdentity is null)
+            throw new MemberAuthException(MemberAuthErrorCode.InvalidCredentials, "Unauthorized");
+
+        if (!VerifyPassword(currentPassword, sessionIdentity.PasswordHash))
+            throw new MemberAuthException(MemberAuthErrorCode.InvalidCredentials, "Password lama salah");
+
+        var now = DateTime.UtcNow;
+        var newHash = HashPassword(newPassword);
+
+        await using var transaction = await loyaltyDb.Database.BeginTransactionAsync(cancellationToken);
+        await loyaltyDb.Database.ExecuteSqlInterpolatedAsync($"""
+            UPDATE "MemberIdentity"
+            SET "passwordHash" = {newHash},
+                "updatedAt" = {now}
+            WHERE "id" = {sessionIdentity.IdentityId}
+              AND "businessId" = {sessionIdentity.BusinessId}
+              AND "memberId" = {sessionIdentity.MemberId}
+            """, cancellationToken);
+
+        await loyaltyDb.Database.ExecuteSqlInterpolatedAsync($"""
+            UPDATE "MemberSession"
+            SET "revokedAt" = {now},
+                "updatedAt" = {now}
+            WHERE "businessId" = {sessionIdentity.BusinessId}
+              AND "memberId" = {sessionIdentity.MemberId}
+              AND "revokedAt" IS NULL
+            """, cancellationToken);
+
+        await transaction.CommitAsync(cancellationToken);
+    }
+
+    public async Task DeleteAccountAsync(
+        string? sessionToken,
+        CancellationToken cancellationToken = default)
+    {
+        var sessionIdentity = await LoadSessionIdentityAsync(sessionToken, cancellationToken);
+        if (sessionIdentity is null)
+            throw new MemberAuthException(MemberAuthErrorCode.InvalidCredentials, "Unauthorized");
+
+        var now = DateTime.UtcNow;
+        var anonymizedEmail = $"deleted+{sessionIdentity.MemberId}@member.invalid";
+        var replacementPasswordHash = HashPassword(CreateOpaqueToken());
+
+        await using var transaction = await loyaltyDb.Database.BeginTransactionAsync(cancellationToken);
+
+        await loyaltyDb.Database.ExecuteSqlInterpolatedAsync($"""
+            UPDATE "MemberIdentity"
+            SET "email" = {anonymizedEmail},
+                "passwordHash" = {replacementPasswordHash},
+                "verifiedAt" = NULL,
+                "lockedAt" = {now},
+                "failedLoginCount" = 0,
+                "updatedAt" = {now}
+            WHERE "businessId" = {sessionIdentity.BusinessId}
+              AND "memberId" = {sessionIdentity.MemberId}
+            """, cancellationToken);
+
+        await loyaltyDb.Database.ExecuteSqlInterpolatedAsync($"""
+            UPDATE "Member"
+            SET "name" = {"Deleted Member"},
+                "email" = NULL,
+                "phone" = NULL,
+                "AvatarUrl" = NULL,
+                "updatedAt" = {now}
+            WHERE "id" = {sessionIdentity.MemberId}
+              AND "businessId" = {sessionIdentity.BusinessId}
+            """, cancellationToken);
+
+        await loyaltyDb.Database.ExecuteSqlInterpolatedAsync($"""
+            UPDATE "MemberCard"
+            SET "isActive" = false,
+                "completedAt" = COALESCE("completedAt", {now}),
+                "updatedAt" = {now}
+            WHERE "memberId" = {sessionIdentity.MemberId}
+              AND "businessId" = {sessionIdentity.BusinessId}
+              AND "isActive" = true
+            """, cancellationToken);
+
+        await loyaltyDb.Database.ExecuteSqlInterpolatedAsync($"""
+            UPDATE "MemberReward"
+            SET "status" = {"REVOKED"},
+                "updatedAt" = {now}
+            WHERE "memberId" = {sessionIdentity.MemberId}
+              AND "businessId" = {sessionIdentity.BusinessId}
+            """, cancellationToken);
+
+        await loyaltyDb.Database.ExecuteSqlInterpolatedAsync($"""
+            UPDATE "RewardToken"
+            SET "status" = {"REVOKED"},
+                "usedAt" = COALESCE("usedAt", {now}),
+                "updatedAt" = {now}
+            WHERE "memberId" = {sessionIdentity.MemberId}
+              AND "businessId" = {sessionIdentity.BusinessId}
+            """, cancellationToken);
+
+        await loyaltyDb.Database.ExecuteSqlInterpolatedAsync($"""
+            UPDATE "MemberSession"
+            SET "revokedAt" = {now},
+                "updatedAt" = {now}
+            WHERE "memberId" = {sessionIdentity.MemberId}
+              AND "businessId" = {sessionIdentity.BusinessId}
+              AND "revokedAt" IS NULL
+            """, cancellationToken);
+
+        await transaction.CommitAsync(cancellationToken);
+    }
+
+    private async Task<IdentityRow?> LoadIdentityByEmailAsync(
         string businessId,
         string normalizedEmail,
         CancellationToken cancellationToken)
@@ -149,6 +270,59 @@ public sealed class MemberAuthService(
                 reader.GetString(0),
                 reader.GetString(1),
                 reader.GetString(2));
+        }
+        finally
+        {
+            if (closeAfter)
+                await connection.CloseAsync();
+        }
+    }
+
+    private async Task<SessionIdentityRow?> LoadSessionIdentityAsync(
+        string? sessionToken,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(sessionToken))
+            return null;
+
+        var tokenHash = HashToken(sessionToken);
+        var now = DateTime.UtcNow;
+        var session = await loyaltyDb.MemberSessions.AsNoTracking()
+            .Where(x => x.SessionTokenHash == tokenHash
+                        && x.RevokedAt == null
+                        && x.ExpiresAt > now)
+            .Select(x => new { x.MemberId, x.BusinessId })
+            .SingleOrDefaultAsync(cancellationToken);
+        if (session is null)
+            return null;
+
+        var connection = loyaltyDb.Database.GetDbConnection();
+        var closeAfter = connection.State != ConnectionState.Open;
+        if (closeAfter)
+            await connection.OpenAsync(cancellationToken);
+
+        try
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT "id", "passwordHash"
+                FROM "MemberIdentity"
+                WHERE "businessId" = @businessId
+                  AND "memberId" = @memberId
+                LIMIT 1
+                """;
+            AddParameter(command, "@businessId", session.BusinessId);
+            AddParameter(command, "@memberId", session.MemberId);
+
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            if (!await reader.ReadAsync(cancellationToken))
+                return null;
+
+            return new SessionIdentityRow(
+                reader.GetString(0),
+                session.MemberId,
+                session.BusinessId,
+                reader.GetString(1));
         }
         finally
         {
@@ -251,6 +425,22 @@ public sealed class MemberAuthService(
         }
     }
 
+    private static string HashPassword(string password)
+    {
+        var salt = RandomNumberGenerator.GetBytes(16);
+        var derived = ScryptEncoder.CryptoScrypt(
+            Encoding.UTF8.GetBytes(password),
+            salt,
+            16384,
+            8,
+            1,
+            32);
+        return "scrypt$"
+               + Convert.ToHexString(salt).ToLowerInvariant()
+               + "$"
+               + Convert.ToHexString(derived).ToLowerInvariant();
+    }
+
     private static string CreateOpaqueToken()
     {
         var bytes = RandomNumberGenerator.GetBytes(32);
@@ -267,4 +457,10 @@ public sealed class MemberAuthService(
         new(MemberAuthErrorCode.InvalidCredentials, "Invalid email or password");
 
     private sealed record IdentityRow(string Id, string MemberId, string PasswordHash);
+    private sealed record SessionIdentityRow(
+        string IdentityId,
+        string MemberId,
+        string BusinessId,
+        string PasswordHash);
+
 }
