@@ -59,7 +59,7 @@ public sealed class MemberAuthService(
             .SingleOrDefaultAsync(
                 x => x.Id == identity.MemberId && x.BusinessId == business.Id,
                 cancellationToken);
-        if (member is null)
+        if (member is null || !member.IsActive)
             throw InvalidCredentials();
 
         var now = DateTime.UtcNow;
