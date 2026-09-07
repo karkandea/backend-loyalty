@@ -84,15 +84,17 @@ public sealed class MemberGoogleAuthService(
         }
         else
         {
-            member = await loyaltyDb.Members
+            var existingMember = await loyaltyDb.Members
                 .Where(x => x.BusinessId == business.Id
                             && x.Email != null
                             && x.Email.ToLower() == normalizedEmail)
                 .OrderByDescending(x => x.CreatedAt)
                 .FirstOrDefaultAsync(cancellationToken);
 
-            if (member is not null)
+            if (existingMember is not null)
             {
+                member = existingMember;
+
                 if (!member.IsActive)
                     throw new MemberGoogleAuthException(
                         MemberGoogleAuthErrorCode.MemberInactive,
@@ -248,7 +250,7 @@ public sealed class MemberGoogleAuthService(
     {
         var value = string.IsNullOrWhiteSpace(next) ? "/member" : next.Trim();
 
-        if (!value.StartsWith('/', StringComparison.Ordinal)
+        if (!value.StartsWith("/", StringComparison.Ordinal)
             || value.StartsWith("//", StringComparison.Ordinal)
             || value.Contains("://", StringComparison.Ordinal))
         {
