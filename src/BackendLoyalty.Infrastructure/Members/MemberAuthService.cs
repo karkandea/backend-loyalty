@@ -435,7 +435,10 @@ public sealed class MemberAuthService(
             8,
             1,
             32);
-        return $"scrypt{StringPool.Dollar}{Convert.ToHexString(salt).ToLowerInvariant()}{StringPool.Dollar}{Convert.ToHexString(derived).ToLowerInvariant()}";
+        return "scrypt$"
+               + Convert.ToHexString(salt).ToLowerInvariant()
+               + "$"
+               + Convert.ToHexString(derived).ToLowerInvariant();
     }
 
     private static string CreateOpaqueToken()
@@ -460,8 +463,4 @@ public sealed class MemberAuthService(
         string BusinessId,
         string PasswordHash);
 
-    private static class StringPool
-    {
-        public const string Dollar = "$";
-    }
 }
