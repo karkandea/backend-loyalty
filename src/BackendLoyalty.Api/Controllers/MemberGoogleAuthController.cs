@@ -16,6 +16,17 @@ public sealed class MemberGoogleAuthController(
 {
     private const string MemberSessionCookie = "member_session";
 
+    [HttpGet("config")]
+    public IActionResult Config()
+    {
+        var clientId = configuration["GoogleOAuth:ClientId"]?.Trim();
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            enabled = !string.IsNullOrWhiteSpace(clientId),
+            clientId = string.IsNullOrWhiteSpace(clientId) ? null : clientId,
+        }));
+    }
+
     [EnableRateLimiting("auth-login")]
     [HttpPost]
     public async Task<IActionResult> SignIn(
