@@ -143,8 +143,11 @@ public sealed class MemberPortalController(
                 memberEmail = member.Email,
                 memberBarcode = member.MemberBarcode,
                 phone = memberVisual?.Phone ?? member.Phone,
-                avatarUrl = memberVisual?.AvatarUrl,
+                avatarUrl = memberVisual?.AvatarUrl ?? member.AvatarUrl,
                 emailVerifiedAt = memberVisual?.EmailVerifiedAt,
+                dateOfBirth = member.DateOfBirth,
+                hasCompletedProfile = member.HasCompletedProfile,
+                isActive = member.IsActive,
             },
             business = business is null
                 ? null
