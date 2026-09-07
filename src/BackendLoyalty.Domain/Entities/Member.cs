@@ -10,6 +10,10 @@ public sealed class Member
     public string MemberBarcode { get; set; } = string.Empty;
     public int TotalStamps { get; set; }
     public DateTime DateJoined { get; set; }
+    public DateTime? DateOfBirth { get; set; }
+    public string? AvatarUrl { get; set; }
+    public bool HasCompletedProfile { get; set; } = true;
+    public bool IsActive { get; set; } = true;
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
 }
