@@ -190,6 +190,26 @@ public sealed class MemberPublicAuthService(
             }
         }
 
+        var member = await loyaltyDb.Members.AsNoTracking().SingleOrDefaultAsync(
+            x => x.Id == reset.MemberId && x.BusinessId == reset.BusinessId,
+            cancellationToken);
+        if (member is null)
+            return MemberPasswordResetResult.InvalidOrExpired;
+
+        string? emailForIdentity = member.Email?.Trim().ToLowerInvariant();
+        if (!string.IsNullOrWhiteSpace(emailForIdentity))
+        {
+            var existingOwner = await LoadIdentityMemberIdByEmailAsync(
+                reset.BusinessId,
+                emailForIdentity,
+                cancellationToken);
+            if (existingOwner is not null &&
+                !string.Equals(existingOwner, reset.MemberId, StringComparison.Ordinal))
+            {
+                emailForIdentity = null;
+            }
+        }
+
         await using var transaction = await loyaltyDb.Database.BeginTransactionAsync(cancellationToken);
 
         var consumed = await loyaltyDb.Database.ExecuteSqlInterpolatedAsync($"""
@@ -204,29 +224,6 @@ public sealed class MemberPublicAuthService(
         {
             await transaction.RollbackAsync(cancellationToken);
             return MemberPasswordResetResult.InvalidOrExpired;
-        }
-
-        var member = await loyaltyDb.Members.AsNoTracking().SingleOrDefaultAsync(
-            x => x.Id == reset.MemberId && x.BusinessId == reset.BusinessId,
-            cancellationToken);
-        if (member is null)
-        {
-            await transaction.RollbackAsync(cancellationToken);
-            return MemberPasswordResetResult.InvalidOrExpired;
-        }
-
-        string? emailForIdentity = member.Email?.Trim().ToLowerInvariant();
-        if (!string.IsNullOrWhiteSpace(emailForIdentity))
-        {
-            var existingOwner = await LoadIdentityMemberIdByEmailAsync(
-                reset.BusinessId,
-                emailForIdentity,
-                cancellationToken);
-            if (existingOwner is not null &&
-                !string.Equals(existingOwner, reset.MemberId, StringComparison.Ordinal))
-            {
-                emailForIdentity = null;
-            }
         }
 
         var newHash = HashPassword(newPassword);
