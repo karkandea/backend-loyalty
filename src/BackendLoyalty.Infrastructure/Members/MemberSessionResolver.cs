@@ -29,6 +29,7 @@ public sealed class MemberSessionResolver(LoyaltyDbContext dbContext) : IMemberS
                   && session.RevokedAt == null
                   && session.ExpiresAt > now
                   && member.BusinessId == session.BusinessId
+                  && member.IsActive
             select new MemberSessionContext(
                 member.Id,
                 member.BusinessId,
