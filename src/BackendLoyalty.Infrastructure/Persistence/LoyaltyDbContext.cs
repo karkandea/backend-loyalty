@@ -30,6 +30,10 @@ public sealed class LoyaltyDbContext(DbContextOptions<LoyaltyDbContext> options)
             entity.Property(x => x.MemberBarcode).HasColumnName("memberBarcode");
             entity.Property(x => x.TotalStamps).HasColumnName("totalStamps");
             entity.Property(x => x.DateJoined).HasColumnName("dateJoined");
+            entity.Property(x => x.DateOfBirth).HasColumnName("DateOfBirth").HasColumnType("date");
+            entity.Property(x => x.AvatarUrl).HasColumnName("AvatarUrl");
+            entity.Property(x => x.HasCompletedProfile).HasColumnName("hasCompletedProfile");
+            entity.Property(x => x.IsActive).HasColumnName("isActive");
             entity.Property(x => x.CreatedAt).HasColumnName("createdAt");
             entity.Property(x => x.UpdatedAt).HasColumnName("updatedAt");
             entity.HasIndex(x => x.BusinessId);
