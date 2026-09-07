@@ -19,7 +19,7 @@ public sealed class MemberPublicAuthController(
         "If the email exists, a reset link has been sent.";
 
     [EnableRateLimiting("signup")]
-    [HttpPost("register")]
+    [HttpPost("signup")]
     public async Task<IActionResult> Register(
         [FromBody] MemberRegisterRequest request,
         CancellationToken cancellationToken)
@@ -61,6 +61,127 @@ public sealed class MemberPublicAuthController(
                 requiresEmailConfirmation = result.RequiresEmailConfirmation,
                 message = result.Message,
             }));
+        }
+        catch (MemberPublicAuthException exception)
+        {
+            return MapPublicAuthException(exception);
+        }
+    }
+
+    [EnableRateLimiting("email-action")]
+    [HttpPost("send-otp")]
+    public async Task<IActionResult> SendEmailOtp(
+        [FromBody] MemberEmailOtpRequest request,
+        CancellationToken cancellationToken)
+    {
+        var email = request.Email?.Trim().ToLowerInvariant() ?? string.Empty;
+        var businessSlug = FirstNonBlank(
+            Request.Headers["x-tenant-slug"].FirstOrDefault(),
+            Request.Headers["x-business-slug"].FirstOrDefault(),
+            request.BusinessSlug);
+        var deviceId = ResolveDeviceId();
+
+        if (!new EmailAddressAttribute().IsValid(email) ||
+            string.IsNullOrWhiteSpace(deviceId))
+        {
+            return BadRequest(ApiResponse<object>.Fail(
+                "VALIDATION_ERROR",
+                string.IsNullOrWhiteSpace(deviceId)
+                    ? "Device ID is required"
+                    : "Invalid email address"));
+        }
+
+        try
+        {
+            var result = await memberAuth.SendEmailVerificationOtpAsync(
+                email,
+                businessSlug,
+                deviceId,
+                cancellationToken);
+
+            if (result.Status == MemberEmailOtpSendStatus.AlreadyVerified)
+            {
+                return Ok(ApiResponse<object>.Ok(new
+                {
+                    message = "Email sudah terverifikasi. Silakan login.",
+                }));
+            }
+
+            var issue = result.Issue!;
+            await emailSender.SendMemberVerificationOtpAsync(
+                issue.Email,
+                issue.RawOtp,
+                15,
+                cancellationToken);
+
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                message = "Kode OTP telah dikirim ke email Anda.",
+                otpSessionId = issue.OtpSessionId,
+                expiresAt = issue.ExpiresAt,
+            }));
+        }
+        catch (MemberPublicAuthException exception)
+        {
+            return MapPublicAuthException(exception);
+        }
+    }
+
+    [EnableRateLimiting("email-action")]
+    [HttpPost("verify-email-otp")]
+    public async Task<IActionResult> VerifyEmailOtp(
+        [FromBody] MemberVerifyEmailOtpRequest request,
+        CancellationToken cancellationToken)
+    {
+        var email = request.Email?.Trim().ToLowerInvariant() ?? string.Empty;
+        var otp = request.Otp?.Trim() ?? string.Empty;
+        var sessionId = request.OtpSessionId?.Trim() ?? string.Empty;
+        var businessSlug = FirstNonBlank(
+            Request.Headers["x-tenant-slug"].FirstOrDefault(),
+            Request.Headers["x-business-slug"].FirstOrDefault(),
+            request.BusinessSlug);
+        var deviceId = ResolveDeviceId();
+
+        if (!new EmailAddressAttribute().IsValid(email) ||
+            otp.Length != 6 ||
+            !otp.All(char.IsDigit) ||
+            string.IsNullOrWhiteSpace(sessionId) ||
+            string.IsNullOrWhiteSpace(deviceId))
+        {
+            return BadRequest(ApiResponse<object>.Fail(
+                "VALIDATION_ERROR",
+                string.IsNullOrWhiteSpace(deviceId)
+                    ? "Device ID is required"
+                    : "Invalid OTP payload"));
+        }
+
+        try
+        {
+            var result = await memberAuth.VerifyEmailVerificationOtpAsync(
+                email,
+                otp,
+                sessionId,
+                businessSlug,
+                deviceId,
+                cancellationToken);
+
+            return result switch
+            {
+                MemberEmailOtpVerifyResult.Success =>
+                    Ok(ApiResponse<object>.Ok(new { message = "Email berhasil diverifikasi!" })),
+                MemberEmailOtpVerifyResult.NotFound =>
+                    NotFound(ApiResponse<object>.Fail("NOT_FOUND", "Session OTP tidak ditemukan.")),
+                MemberEmailOtpVerifyResult.AlreadyUsed =>
+                    Conflict(ApiResponse<object>.Fail("CONFLICT", "OTP sudah digunakan.")),
+                MemberEmailOtpVerifyResult.Expired =>
+                    BadRequest(ApiResponse<object>.Fail(
+                        "VALIDATION_ERROR",
+                        "OTP sudah kedaluwarsa. Silakan minta kode baru.")),
+                _ =>
+                    BadRequest(ApiResponse<object>.Fail(
+                        "VALIDATION_ERROR",
+                        "OTP tidak valid.")),
+            };
         }
         catch (MemberPublicAuthException exception)
         {
@@ -156,6 +277,11 @@ public sealed class MemberPublicAuthController(
             MemberPublicAuthErrorCode.BusinessInactive =>
                 StatusCode(StatusCodes.Status403Forbidden,
                     ApiResponse<object>.Fail("FORBIDDEN", exception.Message)),
+            MemberPublicAuthErrorCode.MemberNotFound =>
+                NotFound(ApiResponse<object>.Fail("NOT_FOUND", exception.Message)),
+            MemberPublicAuthErrorCode.TooManyRequests =>
+                StatusCode(StatusCodes.Status429TooManyRequests,
+                    ApiResponse<object>.Fail("TOO_MANY_REQUESTS", exception.Message)),
             MemberPublicAuthErrorCode.Conflict or
             MemberPublicAuthErrorCode.CardNotReady or
             MemberPublicAuthErrorCode.MemberLimitReached =>
@@ -200,6 +326,12 @@ public sealed class MemberPublicAuthController(
             : null;
     }
 
+    private string? ResolveDeviceId() =>
+        FirstNonBlank(
+            Request.Headers["x-device-id"].FirstOrDefault(),
+            Request.Headers["x-device-fingerprint"].FirstOrDefault(),
+            Request.Headers["x-device"].FirstOrDefault())?.Trim();
+
     private static string? NormalizeDateOfBirth(string? value)
     {
         if (string.IsNullOrWhiteSpace(value))
@@ -241,4 +373,18 @@ public sealed class MemberResetPasswordRequest
 {
     public string? Token { get; init; }
     public string? Password { get; init; }
+}
+
+public sealed class MemberEmailOtpRequest
+{
+    public string? Email { get; init; }
+    public string? BusinessSlug { get; init; }
+}
+
+public sealed class MemberVerifyEmailOtpRequest
+{
+    public string? Email { get; init; }
+    public string? Otp { get; init; }
+    public string? OtpSessionId { get; init; }
+    public string? BusinessSlug { get; init; }
 }
