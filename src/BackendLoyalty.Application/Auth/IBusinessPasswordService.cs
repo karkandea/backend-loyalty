@@ -78,6 +78,12 @@ public interface ITransactionalEmailSender
         string resetUrl,
         CancellationToken cancellationToken);
 
+    Task<bool> SendMemberVerificationOtpAsync(
+        string recipient,
+        string otpCode,
+        int expiresInMinutes,
+        CancellationToken cancellationToken);
+
     Task<bool> SendBusinessInvitationAsync(
         string recipient,
         string businessName,
