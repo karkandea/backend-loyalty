@@ -73,6 +73,9 @@ public sealed class MemberGoogleAuthService(
             await loyaltyDb.Database.ExecuteSqlInterpolatedAsync($"""
                 UPDATE "MemberIdentity"
                 SET "verifiedAt" = COALESCE("verifiedAt", {now}),
+                    "lastLoginAt" = {now},
+                    "failedLoginCount" = 0,
+                    "lockedAt" = NULL,
                     "updatedAt" = {now}
                 WHERE "id" = {identity.Id}
                   AND "businessId" = {business.Id}
