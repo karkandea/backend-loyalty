@@ -68,6 +68,7 @@ builder.Services.AddDbContext<StandaloneAuthDbContext>(options =>
 builder.Services.AddScoped<IMemberScanService, MemberScanService>();
 builder.Services.AddScoped<IMemberSessionResolver, MemberSessionResolver>();
 builder.Services.AddScoped<IMemberAuthService, MemberAuthService>();
+builder.Services.AddScoped<IMemberPublicAuthService, MemberPublicAuthService>();
 builder.Services.AddScoped<ILoyaltyStampService, LoyaltyStampService>();
 builder.Services.AddScoped<IRewardRedemptionService, RewardRedemptionService>();
 builder.Services.AddScoped<IMemberRewardTokenService, MemberRewardTokenService>();
