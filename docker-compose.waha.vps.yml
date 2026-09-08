@@ -8,7 +8,7 @@ services:
     pids_limit: 128
     environment:
       WAHA_API_KEY: ${WAHA_SERVER_API_KEY:?WAHA_SERVER_API_KEY is required}
-      WAHA_API_KEY_EXCLUDE_PATH: "health"
+      WAHA_HEALTHCHECK_API_KEY: ${WAHA_API_KEY:?WAHA_API_KEY is required}
       WAHA_DASHBOARD_ENABLED: "false"
       WHATSAPP_SWAGGER_ENABLED: "false"
       WHATSAPP_DEFAULT_ENGINE: "GOWS"
@@ -19,7 +19,7 @@ services:
     ports:
       - "127.0.0.1:${WAHA_PORT:-3001}:3000"
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:3000/health >/dev/null || exit 1"]
+      test: ["CMD-SHELL", "curl -fsS -H \"X-Api-Key: ${WAHA_HEALTHCHECK_API_KEY}\" http://127.0.0.1:3000/health >/dev/null || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
