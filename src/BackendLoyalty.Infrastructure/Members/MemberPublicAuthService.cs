@@ -9,7 +9,8 @@ namespace BackendLoyalty.Infrastructure.Members;
 
 public sealed class MemberPublicAuthService(
     LoyaltyDbContext loyaltyDb,
-    StandaloneAuthDbContext authDb) : IMemberPublicAuthService
+    StandaloneAuthDbContext authDb,
+    IMemberPhoneOtpService phoneOtpService) : IMemberPublicAuthService
 {
     private static readonly TimeSpan ResetLifetime = TimeSpan.FromMinutes(45);
     private static readonly TimeSpan EmailOtpLifetime = TimeSpan.FromMinutes(15);
@@ -163,6 +164,14 @@ public sealed class MemberPublicAuthService(
                     "Member limit reached for this business tier");
             }
         }
+
+        await phoneOtpService.ConsumeSignupVerificationAsync(
+            normalizedPhone,
+            request.OtpSessionId,
+            request.OtpVerificationToken,
+            business.Id,
+            business.Slug,
+            cancellationToken);
 
         var now = DateTime.UtcNow;
         var memberId = Guid.NewGuid().ToString();
