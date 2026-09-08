@@ -22,6 +22,15 @@ public sealed class MemberPhoneOtpService(
     private static readonly TimeSpan ForgotResetLifetime = TimeSpan.FromMinutes(15);
     private const int MaxAttempts = 3;
 
+    public async Task<bool> IsWhatsAppRegistrationEnabledAsync(
+        string? businessId,
+        string? businessSlug,
+        CancellationToken cancellationToken = default)
+    {
+        var business = await ResolveBusinessAsync(businessId, businessSlug, cancellationToken);
+        return await IsWhatsAppEnabledAsync(business.Id, cancellationToken);
+    }
+
     public async Task<MemberPhoneOtpIssue> SendPublicOtpAsync(
         string phone,
         string? businessId,
