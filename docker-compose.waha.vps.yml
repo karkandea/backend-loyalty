@@ -8,6 +8,7 @@ services:
     pids_limit: 128
     environment:
       WAHA_API_KEY: ${WAHA_SERVER_API_KEY:?WAHA_SERVER_API_KEY is required}
+      WAHA_API_KEY_EXCLUDE_PATH: "health"
       WAHA_DASHBOARD_ENABLED: "false"
       WHATSAPP_SWAGGER_ENABLED: "false"
       WHATSAPP_DEFAULT_ENGINE: "GOWS"
