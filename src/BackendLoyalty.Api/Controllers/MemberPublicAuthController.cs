@@ -293,9 +293,13 @@ public sealed class MemberPublicAuthController(
         [FromBody] MemberResetPasswordRequest request,
         CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(request.Token) ||
-            string.IsNullOrWhiteSpace(request.Password) ||
-            request.Password.Length is < 8 or > 128)
+        var rawToken = FirstNonBlank(
+            request.Token,
+            Request.Cookies["member_reset_token"]);
+
+        if (string.IsNullOrWhiteSpace(rawToken)
+            || string.IsNullOrWhiteSpace(request.Password)
+            || request.Password.Length is < 8 or > 128)
         {
             return BadRequest(ApiResponse<object>.Fail(
                 "VALIDATION_ERROR",
@@ -303,7 +307,7 @@ public sealed class MemberPublicAuthController(
         }
 
         var result = await memberAuth.ResetPasswordAsync(
-            request.Token,
+            rawToken,
             request.Password,
             ResolveTenantSlug(),
             cancellationToken);
@@ -314,6 +318,16 @@ public sealed class MemberPublicAuthController(
                 "FORBIDDEN",
                 "Token tidak valid atau sudah kadaluarsa"));
         }
+
+        Response.Cookies.Delete(
+            "member_reset_token",
+            new CookieOptions
+            {
+                HttpOnly = true,
+                Secure = Request.IsHttps,
+                SameSite = SameSiteMode.Lax,
+                Path = "/",
+            });
 
         return Ok(ApiResponse<object>.Ok(new
         {
