@@ -57,6 +57,11 @@ public interface IWhatsAppOtpSender
 
 public interface IMemberPhoneOtpService
 {
+    Task<bool> IsWhatsAppRegistrationEnabledAsync(
+        string? businessId,
+        string? businessSlug,
+        CancellationToken cancellationToken = default);
+
     Task<MemberPhoneOtpIssue> SendPublicOtpAsync(
         string phone,
         string? businessId,
