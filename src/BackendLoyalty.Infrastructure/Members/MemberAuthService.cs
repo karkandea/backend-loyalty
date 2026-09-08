@@ -17,6 +17,7 @@ public sealed class MemberAuthService(
 
     public async Task<MemberLoginResult> LoginAsync(
         string? email,
+        string? phone,
         string? password,
         string? businessId,
         string? businessSlug,
@@ -25,7 +26,13 @@ public sealed class MemberAuthService(
         CancellationToken cancellationToken = default)
     {
         var normalizedEmail = email?.Trim().ToLowerInvariant();
-        if (string.IsNullOrWhiteSpace(normalizedEmail) || string.IsNullOrEmpty(password))
+        var normalizedPhone = NormalizePhoneE164(phone);
+
+        if ((string.IsNullOrWhiteSpace(normalizedEmail) && normalizedPhone is null)
+            || string.IsNullOrEmpty(password))
+            throw InvalidCredentials();
+
+        if (!string.IsNullOrWhiteSpace(normalizedEmail) && normalizedPhone is not null)
             throw InvalidCredentials();
 
         var normalizedBusinessId = businessId?.Trim();
@@ -45,7 +52,9 @@ public sealed class MemberAuthService(
         if (!business.IsActive)
             throw new MemberAuthException(MemberAuthErrorCode.BusinessInactive, "Business is inactive");
 
-        var identity = await LoadIdentityByEmailAsync(business.Id, normalizedEmail, cancellationToken);
+        var identity = !string.IsNullOrWhiteSpace(normalizedEmail)
+            ? await LoadIdentityByEmailAsync(business.Id, normalizedEmail, cancellationToken)
+            : await LoadIdentityByPhoneAsync(business.Id, normalizedPhone!, cancellationToken);
         if (identity is null)
             throw InvalidCredentials();
 
@@ -397,6 +406,19 @@ public sealed class MemberAuthService(
         command.Parameters.Add(parameter);
     }
 
+    private static string? NormalizePhoneE164(string? input)
+    {
+        if (string.IsNullOrWhiteSpace(input))
+            return null;
+
+        var trimmed = string.Concat(input.Trim().Where(ch => !char.IsWhiteSpace(ch)));
+        var digits = trimmed.StartsWith('+') ? trimmed[1..] : trimmed;
+        if (digits.Length is < 8 or > 15 || digits.Any(ch => !char.IsDigit(ch)))
+            return null;
+
+        return trimmed.StartsWith('+') ? trimmed : $"+{trimmed}";
+    }
+
     private static bool VerifyPassword(string password, string storedHash)
     {
         if (storedHash.StartsWith("$2", StringComparison.Ordinal))
@@ -454,7 +476,7 @@ public sealed class MemberAuthService(
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token))).ToLowerInvariant();
 
     private static MemberAuthException InvalidCredentials() =>
-        new(MemberAuthErrorCode.InvalidCredentials, "Invalid email or password");
+        new(MemberAuthErrorCode.InvalidCredentials, "Invalid email/phone or password");
 
     private sealed record IdentityRow(string Id, string MemberId, string PasswordHash);
     private sealed record SessionIdentityRow(
