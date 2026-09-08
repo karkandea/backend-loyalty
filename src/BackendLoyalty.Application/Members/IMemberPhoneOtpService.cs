@@ -74,6 +74,8 @@ public interface IMemberPhoneOtpService
         string? businessId,
         string? businessSlug,
         string deviceId,
+        string? ip,
+        string? userAgent,
         CancellationToken cancellationToken = default);
 
     Task ConsumeSignupVerificationAsync(
@@ -111,5 +113,7 @@ public interface IMemberPhoneOtpService
         string otp,
         string otpSessionId,
         string deviceId,
+        string? ip,
+        string? userAgent,
         CancellationToken cancellationToken = default);
 }
