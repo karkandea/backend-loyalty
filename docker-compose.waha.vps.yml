@@ -1,0 +1,24 @@
+services:
+  waha:
+    image: devlikeapro/waha:latest
+    container_name: loyalty-waha
+    restart: unless-stopped
+    environment:
+      WAHA_API_KEY: ${WAHA_SERVER_API_KEY:?WAHA_SERVER_API_KEY is required}
+      WAHA_DASHBOARD_ENABLED: "false"
+      WHATSAPP_SWAGGER_ENABLED: "false"
+    volumes:
+      - loyalty-waha-sessions:/app/.sessions
+    ports:
+      - "127.0.0.1:${WAHA_PORT:-3001}:3000"
+    networks:
+      - loyalty-internal
+
+networks:
+  loyalty-internal:
+    external: true
+    name: loyalty-internal
+
+volumes:
+  loyalty-waha-sessions:
+    name: loyalty-waha-sessions
