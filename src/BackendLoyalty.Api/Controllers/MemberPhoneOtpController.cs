@@ -12,6 +12,30 @@ public sealed class MemberPhoneOtpController(
     private const string MemberSessionCookie = "member_session";
     private const string MemberResetCookie = "member_reset_token";
 
+    [HttpGet("api/member/auth/phone-capability")]
+    public async Task<IActionResult> GetWhatsAppCapability(
+        [FromQuery] string? businessId,
+        [FromQuery] string? businessSlug,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var enabled = await phoneOtp.IsWhatsAppRegistrationEnabledAsync(
+                ResolveBusinessId(businessId),
+                ResolveBusinessSlug(businessSlug),
+                cancellationToken);
+
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                whatsappRegisterEnabled = enabled,
+            }));
+        }
+        catch (MemberPhoneOtpException exception)
+        {
+            return MapException(exception);
+        }
+    }
+
     [HttpPost("api/otp/send")]
     public async Task<IActionResult> SendPublicOtp(
         [FromBody] MemberPhoneOtpSendRequest request,
