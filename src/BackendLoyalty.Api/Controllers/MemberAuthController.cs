@@ -21,6 +21,7 @@ public sealed class MemberAuthController(IMemberAuthService memberAuth) : Contro
         {
             var result = await memberAuth.LoginAsync(
                 request.Email,
+                request.Phone,
                 request.Password,
                 FirstNonBlank(
                     Request.Headers["x-tenant-business-id"].FirstOrDefault(),
@@ -160,6 +161,7 @@ public sealed class MemberAuthController(IMemberAuthService memberAuth) : Contro
 public sealed class MemberLoginRequest
 {
     public string? Email { get; init; }
+    public string? Phone { get; init; }
     public string? Password { get; init; }
     public string? BusinessId { get; init; }
     public string? BusinessSlug { get; init; }
