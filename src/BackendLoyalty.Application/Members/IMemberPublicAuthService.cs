@@ -5,6 +5,8 @@ public sealed record MemberRegistrationRequest(
     string Email,
     string Password,
     string DateOfBirth,
+    string OtpSessionId,
+    string OtpVerificationToken,
     string? BusinessId,
     string? BusinessSlug);
 
