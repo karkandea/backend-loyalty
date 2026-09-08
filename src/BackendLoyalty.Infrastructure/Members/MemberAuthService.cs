@@ -287,6 +287,48 @@ public sealed class MemberAuthService(
         }
     }
 
+    private async Task<IdentityRow?> LoadIdentityByPhoneAsync(
+        string businessId,
+        string normalizedPhone,
+        CancellationToken cancellationToken)
+    {
+        var connection = loyaltyDb.Database.GetDbConnection();
+        var closeAfter = connection.State != ConnectionState.Open;
+        if (closeAfter)
+            await connection.OpenAsync(cancellationToken);
+
+        try
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT mi."id", mi."memberId", mi."passwordHash"
+                FROM "MemberIdentity" mi
+                JOIN "Member" m
+                  ON m."id" = mi."memberId"
+                 AND m."businessId" = mi."businessId"
+                WHERE mi."businessId" = @businessId
+                  AND m."phone" = @phone
+                LIMIT 1
+                """;
+            AddParameter(command, "@businessId", businessId);
+            AddParameter(command, "@phone", normalizedPhone);
+
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            if (!await reader.ReadAsync(cancellationToken))
+                return null;
+
+            return new IdentityRow(
+                reader.GetString(0),
+                reader.GetString(1),
+                reader.GetString(2));
+        }
+        finally
+        {
+            if (closeAfter)
+                await connection.CloseAsync();
+        }
+    }
+
     private async Task<SessionIdentityRow?> LoadSessionIdentityAsync(
         string? sessionToken,
         CancellationToken cancellationToken)
