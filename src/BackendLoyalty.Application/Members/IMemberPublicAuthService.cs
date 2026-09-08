@@ -17,6 +17,22 @@ public sealed record MemberRegistrationResult(
     bool RequiresEmailConfirmation,
     string Message);
 
+public sealed record MemberPhoneRegistrationRequest(
+    string Name,
+    string Phone,
+    string Password,
+    string DateOfBirth,
+    string? BusinessId,
+    string? BusinessSlug);
+
+public sealed record MemberPhoneRegistrationResult(
+    string MemberId,
+    string BusinessId,
+    string BusinessSlug,
+    string Phone,
+    string MemberBarcode,
+    string Message);
+
 public sealed record MemberPasswordResetIssue(
     string MemberId,
     string BusinessId,
@@ -80,6 +96,10 @@ public interface IMemberPublicAuthService
 {
     Task<MemberRegistrationResult> RegisterAsync(
         MemberRegistrationRequest request,
+        CancellationToken cancellationToken = default);
+
+    Task<MemberPhoneRegistrationResult> RegisterPhoneAsync(
+        MemberPhoneRegistrationRequest request,
         CancellationToken cancellationToken = default);
 
     Task<MemberEmailOtpSendResult> SendEmailVerificationOtpAsync(
