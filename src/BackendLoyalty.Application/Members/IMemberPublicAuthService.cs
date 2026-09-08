@@ -5,8 +5,6 @@ public sealed record MemberRegistrationRequest(
     string Email,
     string Password,
     string DateOfBirth,
-    string OtpSessionId,
-    string OtpVerificationToken,
     string? BusinessId,
     string? BusinessSlug);
 
@@ -24,6 +22,8 @@ public sealed record MemberPhoneRegistrationRequest(
     string Phone,
     string Password,
     string DateOfBirth,
+    string OtpSessionId,
+    string OtpVerificationToken,
     string? BusinessId,
     string? BusinessSlug);
 
