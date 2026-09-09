@@ -204,6 +204,7 @@ public sealed class MemberAuthService(
                 "email" = NULL,
                 "phone" = NULL,
                 "AvatarUrl" = NULL,
+                "isActive" = {false},
                 "updatedAt" = {now}
             WHERE "id" = {sessionIdentity.MemberId}
               AND "businessId" = {sessionIdentity.BusinessId}
