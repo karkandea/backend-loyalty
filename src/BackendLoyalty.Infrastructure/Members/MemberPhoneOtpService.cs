@@ -841,7 +841,7 @@ public sealed class MemberPhoneOtpService(
 
             var allowed = reader.GetBoolean(0);
             var retryAfter = reader.IsDBNull(2) ? 0 : reader.GetInt32(2);
-            if (!allowed || retryAfter > 0)
+            if (!allowed)
             {
                 throw new MemberPhoneOtpException(
                     MemberPhoneOtpErrorCode.TooManyRequests,
@@ -895,7 +895,11 @@ public sealed class MemberPhoneOtpService(
                 """;
             AddParameter(command, "@businessId", businessId);
             AddParameter(command, "@phone", phone);
-            AddParameter(command, "@excludeMemberId", (object?)excludeMemberId ?? DBNull.Value);
+            var excludeMemberParameter = command.CreateParameter();
+            excludeMemberParameter.ParameterName = "@excludeMemberId";
+            excludeMemberParameter.DbType = DbType.String;
+            excludeMemberParameter.Value = (object?)excludeMemberId ?? DBNull.Value;
+            command.Parameters.Add(excludeMemberParameter);
             var value = await command.ExecuteScalarAsync(cancellationToken);
             return Convert.ToInt32(value) == 0;
         }
