@@ -650,6 +650,239 @@ public sealed class MemberPhoneOtpService(
             cancellationToken);
     }
 
+    public async Task<MemberPhoneOtpIssue?> SendAdminMemberPhoneOtpAsync(
+        string memberId,
+        string businessId,
+        string phone,
+        string deviceId,
+        string? ip,
+        string? userAgent,
+        CancellationToken cancellationToken = default)
+    {
+        var normalizedPhone = NormalizePhoneE164(phone);
+        var normalizedDevice = RequireDeviceId(deviceId);
+
+        var member = await loyaltyDb.Members.AsNoTracking()
+            .SingleOrDefaultAsync(
+                x => x.Id == memberId
+                     && x.BusinessId == businessId
+                     && x.IsActive,
+                cancellationToken);
+        if (member is null)
+            throw new MemberPhoneOtpException(MemberPhoneOtpErrorCode.NotFound, "Member not found");
+
+        if (string.Equals(member.Phone, normalizedPhone, StringComparison.Ordinal))
+            return null;
+
+        if (!await IsPhoneAvailableAsync(businessId, normalizedPhone, memberId, cancellationToken))
+            throw Conflict("Nomor HP sudah terdaftar di bisnis ini.");
+
+        if (!whatsAppSender.IsConfigured)
+            throw ProviderUnavailable();
+
+        var ipKey = string.IsNullOrWhiteSpace(ip) ? "unknown" : ip.Trim();
+        await RequireRateLimitAsync(
+            "otp-send",
+            $"admin-member-phone:{ipKey}:{normalizedDevice}",
+            300,
+            5,
+            cancellationToken);
+        await RequireRateLimitAsync(
+            "admin-member-phone",
+            $"{memberId}:{businessId}:{ipKey}:{normalizedDevice}",
+            300,
+            5,
+            cancellationToken);
+        await RequireRateLimitAsync(
+            "admin-member-phone-daily",
+            $"{normalizedPhone}:{businessId}",
+            86_400,
+            10,
+            cancellationToken);
+
+        var issue = await IssueOtpSessionAsync(
+            businessId,
+            memberId,
+            normalizedPhone,
+            "phone_change",
+            normalizedDevice,
+            cancellationToken);
+
+        try
+        {
+            await whatsAppSender.SendOtpAsync(
+                normalizedPhone,
+                issue.RawOtp,
+                15,
+                cancellationToken);
+        }
+        catch
+        {
+            await TryAuditAsync(
+                "otp_send",
+                "phone_change",
+                businessId,
+                memberId,
+                issue.OtpSessionId,
+                normalizedPhone,
+                ip,
+                normalizedDevice,
+                userAgent,
+                "fail",
+                "WAHA_SEND_FAILED",
+                cancellationToken);
+            throw;
+        }
+
+        await TryAuditAsync(
+            "otp_send",
+            "phone_change",
+            businessId,
+            memberId,
+            issue.OtpSessionId,
+            normalizedPhone,
+            ip,
+            normalizedDevice,
+            userAgent,
+            "success",
+            null,
+            cancellationToken);
+
+        return new MemberPhoneOtpIssue(issue.OtpSessionId, issue.ExpiresAt);
+    }
+
+    public async Task VerifyAdminMemberPhoneOtpAsync(
+        string memberId,
+        string businessId,
+        string phone,
+        string otp,
+        string otpSessionId,
+        string deviceId,
+        string? ip,
+        string? userAgent,
+        CancellationToken cancellationToken = default)
+    {
+        var normalizedPhone = NormalizePhoneE164(phone);
+        var normalizedDevice = RequireDeviceId(deviceId);
+        ValidateOtp(otp);
+
+        var member = await loyaltyDb.Members.AsNoTracking()
+            .SingleOrDefaultAsync(
+                x => x.Id == memberId
+                     && x.BusinessId == businessId
+                     && x.IsActive,
+                cancellationToken);
+        if (member is null)
+            throw new MemberPhoneOtpException(MemberPhoneOtpErrorCode.NotFound, "Member not found");
+
+        if (string.Equals(member.Phone, normalizedPhone, StringComparison.Ordinal))
+            return;
+
+        if (!await IsPhoneAvailableAsync(businessId, normalizedPhone, memberId, cancellationToken))
+            throw Conflict("Nomor HP sudah terdaftar di bisnis ini.");
+
+        var ipKey = string.IsNullOrWhiteSpace(ip) ? "unknown" : ip.Trim();
+        await RequireRateLimitAsync(
+            "otp-verify",
+            $"admin-member-phone:{ipKey}:{normalizedDevice}",
+            300,
+            10,
+            cancellationToken);
+
+        var session = await LoadOtpSessionAsync(
+            otpSessionId,
+            businessId,
+            normalizedPhone,
+            "phone_change",
+            cancellationToken);
+
+        if (session is not null
+            && !string.Equals(session.MemberId, memberId, StringComparison.Ordinal))
+        {
+            throw new MemberPhoneOtpException(
+                MemberPhoneOtpErrorCode.DeviceMismatch,
+                "OTP tidak sesuai dengan akun ini.");
+        }
+
+        await ValidateOtpSessionAsync(
+            session,
+            otp,
+            normalizedDevice,
+            "phone_change",
+            businessId,
+            normalizedPhone,
+            ip,
+            userAgent,
+            cancellationToken);
+
+        if (!await IsPhoneAvailableAsync(businessId, normalizedPhone, memberId, cancellationToken))
+            throw Conflict("Nomor HP sudah terdaftar di bisnis ini.");
+
+        var now = DateTime.UtcNow;
+        await using var transaction = await loyaltyDb.Database.BeginTransactionAsync(cancellationToken);
+
+        var consumed = await loyaltyDb.Database.ExecuteSqlInterpolatedAsync($"""
+            UPDATE "OtpSession"
+            SET "verifiedAt" = {now},
+                "usedAt" = {now},
+                "updatedAt" = {now}
+            WHERE "id" = {session!.Id}
+              AND "businessId" = {businessId}
+              AND "memberId" = {memberId}
+              AND "phoneHash" = {Hash(normalizedPhone)}
+              AND "purpose" = {"phone_change"}
+              AND "deviceId" = {normalizedDevice}
+              AND "usedAt" IS NULL
+              AND "expiresAt" > {now}
+            """, cancellationToken);
+
+        if (consumed != 1)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            throw new MemberPhoneOtpException(
+                MemberPhoneOtpErrorCode.AlreadyUsed,
+                "OTP sudah digunakan.");
+        }
+
+        var updatedMember = await loyaltyDb.Database.ExecuteSqlInterpolatedAsync($"""
+            UPDATE "Member"
+            SET "phone" = {normalizedPhone},
+                "updatedAt" = {now}
+            WHERE "id" = {memberId}
+              AND "businessId" = {businessId}
+              AND "isActive" = true
+            """, cancellationToken);
+
+        if (updatedMember != 1)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            throw new MemberPhoneOtpException(MemberPhoneOtpErrorCode.NotFound, "Member not found");
+        }
+
+        await RecordPhoneUsageAsync(
+            businessId,
+            memberId,
+            normalizedPhone,
+            "admin_change",
+            cancellationToken);
+
+        await transaction.CommitAsync(cancellationToken);
+
+        await TryAuditAsync(
+            "otp_verify",
+            "phone_change",
+            businessId,
+            memberId,
+            session.Id,
+            normalizedPhone,
+            ip,
+            normalizedDevice,
+            userAgent,
+            "success",
+            null,
+            cancellationToken);
+    }
+
     private async Task<(string OtpSessionId, string RawOtp, DateTime ExpiresAt)> IssueOtpSessionAsync(
         string businessId,
         string? memberId,
