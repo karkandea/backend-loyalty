@@ -29,6 +29,7 @@ public interface IMemberAuthService
 {
     Task<MemberLoginResult> LoginAsync(
         string? email,
+        string? phone,
         string? password,
         string? businessId,
         string? businessSlug,

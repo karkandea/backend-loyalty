@@ -9,7 +9,8 @@ namespace BackendLoyalty.Infrastructure.Members;
 
 public sealed class MemberPublicAuthService(
     LoyaltyDbContext loyaltyDb,
-    StandaloneAuthDbContext authDb) : IMemberPublicAuthService
+    StandaloneAuthDbContext authDb,
+    IMemberPhoneOtpService phoneOtpService) : IMemberPublicAuthService
 {
     private static readonly TimeSpan ResetLifetime = TimeSpan.FromMinutes(45);
     private static readonly TimeSpan EmailOtpLifetime = TimeSpan.FromMinutes(15);
@@ -54,7 +55,7 @@ public sealed class MemberPublicAuthService(
         if (maxMembers is > 0)
         {
             var memberCount = await loyaltyDb.Members.CountAsync(
-                x => x.BusinessId == business.Id,
+                x => x.BusinessId == business.Id && x.IsActive,
                 cancellationToken);
             if (memberCount >= maxMembers.Value)
             {
@@ -110,6 +111,140 @@ public sealed class MemberPublicAuthService(
             barcode,
             false,
             "Registrasi berhasil. Silakan login menggunakan email Anda.");
+    }
+
+    public async Task<MemberPhoneRegistrationResult> RegisterPhoneAsync(
+        MemberPhoneRegistrationRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var business = await ResolveBusinessAsync(
+            request.BusinessId,
+            request.BusinessSlug,
+            cancellationToken);
+
+        var normalizedPhone = NormalizePhoneE164(request.Phone);
+
+        var existingPhoneMember = await loyaltyDb.Members.AsNoTracking()
+            .AnyAsync(
+                x => x.BusinessId == business.Id && x.Phone == normalizedPhone,
+                cancellationToken);
+        if (existingPhoneMember)
+        {
+            throw new MemberPublicAuthException(
+                MemberPublicAuthErrorCode.Conflict,
+                "Nomor HP sudah terdaftar di brand ini. Silakan login.");
+        }
+
+        var defaultCardId = await loyaltyDb.Cards.AsNoTracking()
+            .Where(x => x.BusinessId == business.Id
+                        && x.Status == "ACTIVE"
+                        && !x.IsDeleted
+                        && x.Level == 1)
+            .OrderBy(x => x.CreatedAt)
+            .Select(x => x.Id)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (string.IsNullOrWhiteSpace(defaultCardId))
+        {
+            throw new MemberPublicAuthException(
+                MemberPublicAuthErrorCode.CardNotReady,
+                "Loyalty Card sedang disiapkan. Silakan kembali lagi nanti.");
+        }
+
+        var maxMembers = await LoadMaxMembersAsync(business.Id, cancellationToken);
+        if (maxMembers is > 0)
+        {
+            var memberCount = await loyaltyDb.Members.CountAsync(
+                x => x.BusinessId == business.Id && x.IsActive,
+                cancellationToken);
+            if (memberCount >= maxMembers.Value)
+            {
+                throw new MemberPublicAuthException(
+                    MemberPublicAuthErrorCode.MemberLimitReached,
+                    "Member limit reached for this business tier");
+            }
+        }
+
+        await using var transaction = await loyaltyDb.Database.BeginTransactionAsync(cancellationToken);
+
+        await phoneOtpService.ConsumeSignupVerificationAsync(
+            normalizedPhone,
+            request.OtpSessionId,
+            request.OtpVerificationToken,
+            business.Id,
+            business.Slug,
+            cancellationToken);
+
+        var now = DateTime.UtcNow;
+        var memberId = Guid.NewGuid().ToString();
+        var identityId = Guid.NewGuid().ToString();
+        var memberCardId = Guid.NewGuid().ToString();
+        var barcode = CreateMemberBarcode(business.Id);
+        var passwordHash = HashPassword(request.Password);
+        var phoneHash = HashToken(normalizedPhone);
+        var phoneLast4 = new string(normalizedPhone.Where(char.IsDigit).TakeLast(4).ToArray());
+
+        var reserved = await loyaltyDb.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO "PhoneChangeAudit"
+                ("id", "businessId", "memberId", "phoneHash", "phoneLast4", "reason", "createdAt")
+            VALUES
+                ({Guid.NewGuid().ToString()}, {business.Id}, {memberId}, {phoneHash},
+                 {phoneLast4}, {"signup"}, {now})
+            ON CONFLICT ("businessId", "phoneHash")
+            DO UPDATE SET
+                "memberId" = EXCLUDED."memberId",
+                "phoneLast4" = EXCLUDED."phoneLast4",
+                "reason" = EXCLUDED."reason",
+                "createdAt" = EXCLUDED."createdAt"
+            WHERE "PhoneChangeAudit"."reason" = {"delete"}
+            """, cancellationToken);
+
+        if (reserved != 1)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            throw new MemberPublicAuthException(
+                MemberPublicAuthErrorCode.Conflict,
+                "Nomor HP sudah terdaftar di brand ini. Silakan login.");
+        }
+
+        await loyaltyDb.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO "Member"
+                ("id", "businessId", "name", "email", "phone", "memberBarcode",
+                 "totalStamps", "dateJoined", "DateOfBirth", "hasCompletedProfile",
+                 "isActive", "createdAt", "updatedAt")
+            VALUES
+                ({memberId}, {business.Id}, {request.Name.Trim()}, NULL, {normalizedPhone}, {barcode},
+                 {0}, {now}, CAST({request.DateOfBirth} AS date), {true},
+                 {true}, {now}, {now})
+            """, cancellationToken);
+
+        await loyaltyDb.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO "MemberIdentity"
+                ("id", "businessId", "memberId", "email", "passwordHash", "verifiedAt",
+                 "lastLoginAt", "failedLoginCount", "lockedAt", "createdAt", "updatedAt")
+            VALUES
+                ({identityId}, {business.Id}, {memberId}, NULL, {passwordHash}, {now},
+                 NULL, {0}, NULL, {now}, {now})
+            """, cancellationToken);
+
+        await loyaltyDb.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO "MemberCard"
+                ("id", "businessId", "memberId", "cardId", "currentStamps", "isActive",
+                 "startedAt", "completedAt", "createdAt", "updatedAt")
+            VALUES
+                ({memberCardId}, {business.Id}, {memberId}, {defaultCardId}, {0}, {true},
+                 {now}, NULL, {now}, {now})
+            """, cancellationToken);
+
+        await transaction.CommitAsync(cancellationToken);
+
+        return new MemberPhoneRegistrationResult(
+            memberId,
+            business.Id,
+            business.Slug,
+            normalizedPhone,
+            barcode,
+            "Registrasi berhasil. Silakan login menggunakan nomor HP Anda.");
     }
 
     public async Task<MemberEmailOtpSendResult> SendEmailVerificationOtpAsync(
@@ -689,6 +824,20 @@ public sealed class MemberPublicAuthService(
             if (closeAfter)
                 await connection.CloseAsync();
         }
+    }
+
+    private static string NormalizePhoneE164(string input)
+    {
+        var trimmed = string.Concat((input ?? string.Empty).Trim().Where(ch => !char.IsWhiteSpace(ch)));
+        var digits = trimmed.StartsWith('+') ? trimmed[1..] : trimmed;
+        if (digits.Length is < 8 or > 15 || digits.Any(ch => !char.IsDigit(ch)))
+        {
+            throw new MemberPublicAuthException(
+                MemberPublicAuthErrorCode.Conflict,
+                "Phone must contain 8-15 digits and may start with +");
+        }
+
+        return trimmed.StartsWith('+') ? trimmed : $"+{trimmed}";
     }
 
     private static string GenerateOtpCode() =>

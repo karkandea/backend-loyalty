@@ -17,6 +17,7 @@ public sealed class MemberAuthService(
 
     public async Task<MemberLoginResult> LoginAsync(
         string? email,
+        string? phone,
         string? password,
         string? businessId,
         string? businessSlug,
@@ -25,7 +26,13 @@ public sealed class MemberAuthService(
         CancellationToken cancellationToken = default)
     {
         var normalizedEmail = email?.Trim().ToLowerInvariant();
-        if (string.IsNullOrWhiteSpace(normalizedEmail) || string.IsNullOrEmpty(password))
+        var normalizedPhone = NormalizePhoneE164(phone);
+
+        if ((string.IsNullOrWhiteSpace(normalizedEmail) && normalizedPhone is null)
+            || string.IsNullOrEmpty(password))
+            throw InvalidCredentials();
+
+        if (!string.IsNullOrWhiteSpace(normalizedEmail) && normalizedPhone is not null)
             throw InvalidCredentials();
 
         var normalizedBusinessId = businessId?.Trim();
@@ -45,7 +52,9 @@ public sealed class MemberAuthService(
         if (!business.IsActive)
             throw new MemberAuthException(MemberAuthErrorCode.BusinessInactive, "Business is inactive");
 
-        var identity = await LoadIdentityByEmailAsync(business.Id, normalizedEmail, cancellationToken);
+        var identity = !string.IsNullOrWhiteSpace(normalizedEmail)
+            ? await LoadIdentityByEmailAsync(business.Id, normalizedEmail, cancellationToken)
+            : await LoadIdentityByPhoneAsync(business.Id, normalizedPhone!, cancellationToken);
         if (identity is null)
             throw InvalidCredentials();
 
@@ -152,6 +161,22 @@ public sealed class MemberAuthService(
             """, cancellationToken);
 
         await loyaltyDb.Database.ExecuteSqlInterpolatedAsync($"""
+            UPDATE "MemberEmailVerification"
+            SET "usedAt" = {now}
+            WHERE "memberId" = {sessionIdentity.MemberId}
+              AND "businessId" = {sessionIdentity.BusinessId}
+              AND "usedAt" IS NULL
+            """, cancellationToken);
+
+        await loyaltyDb.Database.ExecuteSqlInterpolatedAsync($"""
+            UPDATE "MemberPasswordReset"
+            SET "usedAt" = {now}
+            WHERE "memberId" = {sessionIdentity.MemberId}
+              AND "businessId" = {sessionIdentity.BusinessId}
+              AND "usedAt" IS NULL
+            """, cancellationToken);
+
+        await loyaltyDb.Database.ExecuteSqlInterpolatedAsync($"""
             UPDATE "MemberSession"
             SET "revokedAt" = {now},
                 "updatedAt" = {now}
@@ -174,6 +199,11 @@ public sealed class MemberAuthService(
         var now = DateTime.UtcNow;
         var anonymizedEmail = $"deleted+{sessionIdentity.MemberId}@member.invalid";
         var replacementPasswordHash = HashPassword(CreateOpaqueToken());
+        var currentPhone = await loyaltyDb.Members.AsNoTracking()
+            .Where(x => x.Id == sessionIdentity.MemberId
+                        && x.BusinessId == sessionIdentity.BusinessId)
+            .Select(x => x.Phone)
+            .SingleOrDefaultAsync(cancellationToken);
 
         await using var transaction = await loyaltyDb.Database.BeginTransactionAsync(cancellationToken);
 
@@ -195,10 +225,30 @@ public sealed class MemberAuthService(
                 "email" = NULL,
                 "phone" = NULL,
                 "AvatarUrl" = NULL,
+                "isActive" = {false},
                 "updatedAt" = {now}
             WHERE "id" = {sessionIdentity.MemberId}
               AND "businessId" = {sessionIdentity.BusinessId}
             """, cancellationToken);
+
+        if (!string.IsNullOrWhiteSpace(currentPhone))
+        {
+            var currentPhoneHash = HashToken(currentPhone);
+            var currentPhoneLast4 = new string(currentPhone.Where(char.IsDigit).TakeLast(4).ToArray());
+
+            await loyaltyDb.Database.ExecuteSqlInterpolatedAsync($"""
+                INSERT INTO "PhoneChangeAudit"
+                    ("id", "businessId", "memberId", "phoneHash", "phoneLast4", "reason", "createdAt")
+                VALUES
+                    ({Guid.NewGuid().ToString()}, {sessionIdentity.BusinessId}, {sessionIdentity.MemberId},
+                     {currentPhoneHash}, {currentPhoneLast4}, {"delete"}, {now})
+                ON CONFLICT ("businessId", "phoneHash")
+                DO UPDATE SET
+                    "memberId" = EXCLUDED."memberId",
+                    "phoneLast4" = EXCLUDED."phoneLast4",
+                    "reason" = EXCLUDED."reason"
+                """, cancellationToken);
+        }
 
         await loyaltyDb.Database.ExecuteSqlInterpolatedAsync($"""
             UPDATE "MemberCard"
@@ -261,6 +311,48 @@ public sealed class MemberAuthService(
                 """;
             AddParameter(command, "@businessId", businessId);
             AddParameter(command, "@email", normalizedEmail);
+
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            if (!await reader.ReadAsync(cancellationToken))
+                return null;
+
+            return new IdentityRow(
+                reader.GetString(0),
+                reader.GetString(1),
+                reader.GetString(2));
+        }
+        finally
+        {
+            if (closeAfter)
+                await connection.CloseAsync();
+        }
+    }
+
+    private async Task<IdentityRow?> LoadIdentityByPhoneAsync(
+        string businessId,
+        string normalizedPhone,
+        CancellationToken cancellationToken)
+    {
+        var connection = loyaltyDb.Database.GetDbConnection();
+        var closeAfter = connection.State != ConnectionState.Open;
+        if (closeAfter)
+            await connection.OpenAsync(cancellationToken);
+
+        try
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT mi."id", mi."memberId", mi."passwordHash"
+                FROM "MemberIdentity" mi
+                JOIN "Member" m
+                  ON m."id" = mi."memberId"
+                 AND m."businessId" = mi."businessId"
+                WHERE mi."businessId" = @businessId
+                  AND m."phone" = @phone
+                LIMIT 1
+                """;
+            AddParameter(command, "@businessId", businessId);
+            AddParameter(command, "@phone", normalizedPhone);
 
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
             if (!await reader.ReadAsync(cancellationToken))
@@ -397,6 +489,19 @@ public sealed class MemberAuthService(
         command.Parameters.Add(parameter);
     }
 
+    private static string? NormalizePhoneE164(string? input)
+    {
+        if (string.IsNullOrWhiteSpace(input))
+            return null;
+
+        var trimmed = string.Concat(input.Trim().Where(ch => !char.IsWhiteSpace(ch)));
+        var digits = trimmed.StartsWith('+') ? trimmed[1..] : trimmed;
+        if (digits.Length is < 8 or > 15 || digits.Any(ch => !char.IsDigit(ch)))
+            return null;
+
+        return trimmed.StartsWith('+') ? trimmed : $"+{trimmed}";
+    }
+
     private static bool VerifyPassword(string password, string storedHash)
     {
         if (storedHash.StartsWith("$2", StringComparison.Ordinal))
@@ -454,7 +559,7 @@ public sealed class MemberAuthService(
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token))).ToLowerInvariant();
 
     private static MemberAuthException InvalidCredentials() =>
-        new(MemberAuthErrorCode.InvalidCredentials, "Invalid email or password");
+        new(MemberAuthErrorCode.InvalidCredentials, "Invalid email/phone or password");
 
     private sealed record IdentityRow(string Id, string MemberId, string PasswordHash);
     private sealed record SessionIdentityRow(

@@ -51,36 +51,11 @@ public sealed class MemberAccountController(
             member.Name = name;
         }
 
-        if (body.TryGetProperty("phone", out var phoneNode))
+        if (body.TryGetProperty("phone", out _))
         {
-            if (phoneNode.ValueKind == JsonValueKind.Null)
-            {
-                member.Phone = null;
-            }
-            else if (phoneNode.ValueKind == JsonValueKind.String)
-            {
-                var rawPhone = phoneNode.GetString();
-                if (string.IsNullOrWhiteSpace(rawPhone))
-                {
-                    member.Phone = null;
-                }
-                else
-                {
-                    var normalized = NormalizePhoneE164(rawPhone);
-                    if (normalized is null)
-                    {
-                        return BadRequest(ApiResponse<object>.Fail(
-                            "VALIDATION_ERROR",
-                            "Phone must contain 8-15 digits and may start with +"));
-                    }
-
-                    member.Phone = normalized;
-                }
-            }
-            else
-            {
-                return BadRequest(ApiResponse<object>.Fail("VALIDATION_ERROR", "Invalid phone"));
-            }
+            return Conflict(ApiResponse<object>.Fail(
+                "CONFLICT",
+                "Phone changes require WhatsApp verification. Existing verified numbers can only be replaced by an admin."));
         }
 
         if (body.TryGetProperty("dateOfBirth", out var dobNode))

@@ -25,42 +25,95 @@ public sealed class MemberPublicAuthController(
         CancellationToken cancellationToken)
     {
         var name = request.Name?.Trim() ?? string.Empty;
-        var email = request.Email?.Trim().ToLowerInvariant() ?? string.Empty;
+        var email = request.Email?.Trim().ToLowerInvariant();
+        var phone = request.Phone?.Trim();
         var password = request.Password ?? string.Empty;
         var dateOfBirth = NormalizeDateOfBirth(request.DateOfBirth);
 
-        if (name.Length is < 1 or > 120 ||
-            !new EmailAddressAttribute().IsValid(email) ||
-            password.Length is < 8 or > 128 ||
-            dateOfBirth is null)
+        var hasEmail = !string.IsNullOrWhiteSpace(email);
+        var hasPhone = !string.IsNullOrWhiteSpace(phone);
+
+        if (name.Length is < 1 or > 120
+            || password.Length is < 8 or > 128
+            || dateOfBirth is null
+            || hasEmail == hasPhone)
         {
             return BadRequest(ApiResponse<object>.Fail(
                 "VALIDATION_ERROR",
-                "Nama, email, password 8-128 karakter, dan tanggal lahir yang valid wajib diisi."));
+                "Nama, tepat satu dari email/nomor HP, password 8-128 karakter, dan tanggal lahir yang valid wajib diisi."));
         }
 
         try
         {
-            var result = await memberAuth.RegisterAsync(
-                new MemberRegistrationRequest(
+            if (hasEmail)
+            {
+                if (!new EmailAddressAttribute().IsValid(email)
+                    || !string.IsNullOrWhiteSpace(request.OtpSessionId)
+                    || !string.IsNullOrWhiteSpace(request.OtpVerificationToken))
+                {
+                    return BadRequest(ApiResponse<object>.Fail(
+                        "VALIDATION_ERROR",
+                        "Invalid email signup payload."));
+                }
+
+                var result = await memberAuth.RegisterAsync(
+                    new MemberRegistrationRequest(
+                        name,
+                        email!,
+                        password,
+                        dateOfBirth,
+                        request.BusinessId,
+                        request.BusinessSlug),
+                    cancellationToken);
+
+                return Ok(ApiResponse<object>.Ok(new
+                {
+                    memberId = result.MemberId,
+                    email = result.Email,
+                    phone = (string?)null,
+                    memberBarcode = result.MemberBarcode,
+                    businessId = result.BusinessId,
+                    businessSlug = result.BusinessSlug,
+                    requiresEmailConfirmation = result.RequiresEmailConfirmation,
+                    message = result.Message,
+                }));
+            }
+
+            if (string.IsNullOrWhiteSpace(request.OtpSessionId)
+                || string.IsNullOrWhiteSpace(request.OtpVerificationToken))
+            {
+                return BadRequest(ApiResponse<object>.Fail(
+                    "VALIDATION_ERROR",
+                    "Phone signup requires OTP verification."));
+            }
+
+            var phoneResult = await memberAuth.RegisterPhoneAsync(
+                new MemberPhoneRegistrationRequest(
                     name,
-                    email,
+                    phone!,
                     password,
                     dateOfBirth,
+                    request.OtpSessionId,
+                    request.OtpVerificationToken,
                     request.BusinessId,
                     request.BusinessSlug),
                 cancellationToken);
 
             return Ok(ApiResponse<object>.Ok(new
             {
-                memberId = result.MemberId,
-                email = result.Email,
-                memberBarcode = result.MemberBarcode,
-                businessId = result.BusinessId,
-                businessSlug = result.BusinessSlug,
-                requiresEmailConfirmation = result.RequiresEmailConfirmation,
-                message = result.Message,
+                memberId = phoneResult.MemberId,
+                email = (string?)null,
+                phone = phoneResult.Phone,
+                memberBarcode = phoneResult.MemberBarcode,
+                businessId = phoneResult.BusinessId,
+                businessSlug = phoneResult.BusinessSlug,
+                requiresEmailConfirmation = false,
+                message = phoneResult.Message,
             }));
+        }
+        catch (MemberPhoneOtpException exception)
+        {
+            return MapPhoneOtpException(exception);
         }
         catch (MemberPublicAuthException exception)
         {
@@ -240,9 +293,13 @@ public sealed class MemberPublicAuthController(
         [FromBody] MemberResetPasswordRequest request,
         CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(request.Token) ||
-            string.IsNullOrWhiteSpace(request.Password) ||
-            request.Password.Length is < 8 or > 128)
+        var rawToken = FirstNonBlank(
+            request.Token,
+            Request.Cookies["member_reset_token"]);
+
+        if (string.IsNullOrWhiteSpace(rawToken)
+            || string.IsNullOrWhiteSpace(request.Password)
+            || request.Password.Length is < 8 or > 128)
         {
             return BadRequest(ApiResponse<object>.Fail(
                 "VALIDATION_ERROR",
@@ -250,7 +307,7 @@ public sealed class MemberPublicAuthController(
         }
 
         var result = await memberAuth.ResetPasswordAsync(
-            request.Token,
+            rawToken,
             request.Password,
             ResolveTenantSlug(),
             cancellationToken);
@@ -261,6 +318,16 @@ public sealed class MemberPublicAuthController(
                 "FORBIDDEN",
                 "Token tidak valid atau sudah kadaluarsa"));
         }
+
+        Response.Cookies.Delete(
+            "member_reset_token",
+            new CookieOptions
+            {
+                HttpOnly = true,
+                Secure = Request.IsHttps,
+                SameSite = SameSiteMode.Lax,
+                Path = "/",
+            });
 
         return Ok(ApiResponse<object>.Ok(new
         {
@@ -289,6 +356,40 @@ public sealed class MemberPublicAuthController(
             _ => StatusCode(StatusCodes.Status500InternalServerError,
                 ApiResponse<object>.Fail("INTERNAL_ERROR", "Internal server error")),
         };
+
+    private IActionResult MapPhoneOtpException(MemberPhoneOtpException exception)
+    {
+        if (exception.RetryAfterSeconds is > 0)
+            Response.Headers["Retry-After"] = exception.RetryAfterSeconds.Value.ToString();
+
+        return exception.Code switch
+        {
+            MemberPhoneOtpErrorCode.Validation or
+            MemberPhoneOtpErrorCode.InvalidOtp or
+            MemberPhoneOtpErrorCode.Expired =>
+                BadRequest(ApiResponse<object>.Fail("VALIDATION_ERROR", exception.Message)),
+            MemberPhoneOtpErrorCode.BusinessNotFound =>
+                NotFound(ApiResponse<object>.Fail("NOT_FOUND", exception.Message)),
+            MemberPhoneOtpErrorCode.BusinessInactive or
+            MemberPhoneOtpErrorCode.FeatureDisabled =>
+                StatusCode(StatusCodes.Status403Forbidden,
+                    ApiResponse<object>.Fail("FORBIDDEN", exception.Message)),
+            MemberPhoneOtpErrorCode.Conflict or
+            MemberPhoneOtpErrorCode.DeviceMismatch or
+            MemberPhoneOtpErrorCode.AlreadyUsed =>
+                Conflict(ApiResponse<object>.Fail("CONFLICT", exception.Message)),
+            MemberPhoneOtpErrorCode.NotFound =>
+                NotFound(ApiResponse<object>.Fail("NOT_FOUND", exception.Message)),
+            MemberPhoneOtpErrorCode.TooManyRequests =>
+                StatusCode(StatusCodes.Status429TooManyRequests,
+                    ApiResponse<object>.Fail("TOO_MANY_REQUESTS", exception.Message)),
+            MemberPhoneOtpErrorCode.ProviderUnavailable =>
+                StatusCode(StatusCodes.Status503ServiceUnavailable,
+                    ApiResponse<object>.Fail("PROVIDER_UNAVAILABLE", exception.Message)),
+            _ => StatusCode(StatusCodes.Status500InternalServerError,
+                ApiResponse<object>.Fail("INTERNAL_ERROR", "Internal server error")),
+        };
+    }
 
     private string BuildResetUrl(string slug, string rawToken)
     {
@@ -356,10 +457,13 @@ public sealed class MemberRegisterRequest
 {
     public string? Name { get; init; }
     public string? Email { get; init; }
+    public string? Phone { get; init; }
     public string? Password { get; init; }
     public string? DateOfBirth { get; init; }
     public string? BusinessId { get; init; }
     public string? BusinessSlug { get; init; }
+    public string? OtpSessionId { get; init; }
+    public string? OtpVerificationToken { get; init; }
 }
 
 public sealed class MemberForgotPasswordRequest
