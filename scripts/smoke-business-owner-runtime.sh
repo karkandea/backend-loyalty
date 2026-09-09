@@ -8,6 +8,8 @@ PORT="${LOYALTY_API_PORT:-5092}"
 BASE_URL="http://127.0.0.1:${PORT}"
 OWNER_EMAIL='qa.owner@loyalty.local'
 OWNER_PASSWORD='SmokeOnly-Refresh-2026!'
+POS_EMAIL='qa.pos@loyalty.local'
+POS_PASSWORD='SmokeOnly-Refresh-2026!'
 BUSINESS_ID='10000000-0000-0000-0000-000000000001'
 MEMBER_ID='10000000-0000-0000-0000-000000000004'
 SAME_PHONE='+6285550009921'
@@ -93,7 +95,21 @@ PHONE_MUTATED=0
   echo "ERROR: owner same-phone admin route did not return updated=true" >&2
   exit 1
 }
-echo "PASS: owner can reach admin phone route and same-phone path is idempotent."
+
+POS_LOGIN="$(request_json POST "$BASE_URL/api/admin/auth/login" "{\"email\":\"$POS_EMAIL\",\"password\":\"$POS_PASSWORD\"}")"
+POS_ACCESS="$(printf '%s' "$POS_LOGIN" | json_get data.accessToken)"
+POS_STATUS="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+  -X PATCH \
+  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $POS_ACCESS" \
+  -H 'x-device-id: qa-pos-phone-route-reject' \
+  --data "{\"phone\":\"$SAME_PHONE\"}" \
+  "$BASE_URL/api/admin/member/$MEMBER_ID/phone")"
+[[ "$POS_STATUS" == '401' ]] || {
+  echo "ERROR: POS admin token expected 401 on business-owner phone route, got $POS_STATUS" >&2
+  exit 1
+}
+echo "PASS: business owner reaches admin phone route; POS admin token is rejected."
 
 echo "==> [6/9] Owner completes onboarding and state persists..."
 request_json POST "$BASE_URL/api/business/portal/onboarding/complete" '{}' "$ACCESS" >/dev/null
