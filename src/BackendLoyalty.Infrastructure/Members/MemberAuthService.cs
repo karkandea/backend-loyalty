@@ -210,6 +210,14 @@ public sealed class MemberAuthService(
             """, cancellationToken);
 
         await loyaltyDb.Database.ExecuteSqlInterpolatedAsync($"""
+            UPDATE "PhoneChangeAudit"
+            SET "reason" = {"delete"}
+            WHERE "businessId" = {sessionIdentity.BusinessId}
+              AND "memberId" = {sessionIdentity.MemberId}
+              AND "reason" <> {"delete"}
+            """, cancellationToken);
+
+        await loyaltyDb.Database.ExecuteSqlInterpolatedAsync($"""
             UPDATE "MemberCard"
             SET "isActive" = false,
                 "completedAt" = COALESCE("completedAt", {now}),
