@@ -55,7 +55,7 @@ public sealed class MemberPublicAuthService(
         if (maxMembers is > 0)
         {
             var memberCount = await loyaltyDb.Members.CountAsync(
-                x => x.BusinessId == business.Id,
+                x => x.BusinessId == business.Id && x.IsActive,
                 cancellationToken);
             if (memberCount >= maxMembers.Value)
             {
@@ -155,7 +155,7 @@ public sealed class MemberPublicAuthService(
         if (maxMembers is > 0)
         {
             var memberCount = await loyaltyDb.Members.CountAsync(
-                x => x.BusinessId == business.Id,
+                x => x.BusinessId == business.Id && x.IsActive,
                 cancellationToken);
             if (memberCount >= maxMembers.Value)
             {
