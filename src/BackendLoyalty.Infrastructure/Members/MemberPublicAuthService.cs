@@ -190,7 +190,13 @@ public sealed class MemberPublicAuthService(
             VALUES
                 ({Guid.NewGuid().ToString()}, {business.Id}, {memberId}, {phoneHash},
                  {phoneLast4}, {"signup"}, {now})
-            ON CONFLICT ("businessId", "phoneHash") DO NOTHING
+            ON CONFLICT ("businessId", "phoneHash")
+            DO UPDATE SET
+                "memberId" = EXCLUDED."memberId",
+                "phoneLast4" = EXCLUDED."phoneLast4",
+                "reason" = EXCLUDED."reason",
+                "createdAt" = EXCLUDED."createdAt"
+            WHERE "PhoneChangeAudit"."reason" = {"delete"}
             """, cancellationToken);
 
         if (reserved != 1)
