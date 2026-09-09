@@ -121,4 +121,24 @@ public interface IMemberPhoneOtpService
         string? ip,
         string? userAgent,
         CancellationToken cancellationToken = default);
+
+    Task<MemberPhoneOtpIssue?> SendAdminMemberPhoneOtpAsync(
+        string memberId,
+        string businessId,
+        string phone,
+        string deviceId,
+        string? ip,
+        string? userAgent,
+        CancellationToken cancellationToken = default);
+
+    Task VerifyAdminMemberPhoneOtpAsync(
+        string memberId,
+        string businessId,
+        string phone,
+        string otp,
+        string otpSessionId,
+        string deviceId,
+        string? ip,
+        string? userAgent,
+        CancellationToken cancellationToken = default);
 }
