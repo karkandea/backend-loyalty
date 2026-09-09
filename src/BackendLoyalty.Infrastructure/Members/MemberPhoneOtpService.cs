@@ -1441,17 +1441,24 @@ public sealed class MemberPhoneOtpService(
                          CAST(NULLIF(@ip, '') AS inet),
                          @deviceId, @userAgent, false, NULL, @status, @errorCode, '{}'::jsonb)
                     """;
+                var memberUuid = Guid.TryParse(memberId, out var parsedMemberId)
+                    ? parsedMemberId
+                    : (Guid?)null;
+                var otpSessionUuid = Guid.TryParse(otpSessionId, out var parsedOtpSessionId)
+                    ? parsedOtpSessionId
+                    : (Guid?)null;
+
                 AddParameter(command, "@eventType", eventType);
                 AddParameter(command, "@purpose", purpose);
                 AddParameter(command, "@businessId", businessId);
-                AddParameter(command, "@memberId", (object?)memberId ?? DBNull.Value);
-                AddParameter(command, "@otpSessionId", (object?)otpSessionId ?? DBNull.Value);
+                AddParameter(command, "@memberId", (object?)memberUuid ?? DBNull.Value, DbType.Guid);
+                AddParameter(command, "@otpSessionId", (object?)otpSessionUuid ?? DBNull.Value, DbType.Guid);
                 AddParameter(command, "@phoneHash", Hash(phone));
-                AddParameter(command, "@ip", (object?)ip ?? DBNull.Value);
+                AddParameter(command, "@ip", (object?)ip ?? DBNull.Value, DbType.String);
                 AddParameter(command, "@deviceId", deviceId);
-                AddParameter(command, "@userAgent", (object?)userAgent ?? DBNull.Value);
+                AddParameter(command, "@userAgent", (object?)userAgent ?? DBNull.Value, DbType.String);
                 AddParameter(command, "@status", status);
-                AddParameter(command, "@errorCode", (object?)errorCode ?? DBNull.Value);
+                AddParameter(command, "@errorCode", (object?)errorCode ?? DBNull.Value, DbType.String);
                 await command.ExecuteNonQueryAsync(cancellationToken);
             }
             finally
@@ -1556,10 +1563,16 @@ public sealed class MemberPhoneOtpService(
     private static string? NullIfBlank(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
-    private static void AddParameter(DbCommand command, string name, object value)
+    private static void AddParameter(
+        DbCommand command,
+        string name,
+        object value,
+        DbType? dbType = null)
     {
         var parameter = command.CreateParameter();
         parameter.ParameterName = name;
+        if (dbType.HasValue)
+            parameter.DbType = dbType.Value;
         parameter.Value = value;
         command.Parameters.Add(parameter);
     }
