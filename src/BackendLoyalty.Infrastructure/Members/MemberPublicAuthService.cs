@@ -165,6 +165,8 @@ public sealed class MemberPublicAuthService(
             }
         }
 
+        await using var transaction = await loyaltyDb.Database.BeginTransactionAsync(cancellationToken);
+
         await phoneOtpService.ConsumeSignupVerificationAsync(
             normalizedPhone,
             request.OtpSessionId,
@@ -181,8 +183,6 @@ public sealed class MemberPublicAuthService(
         var passwordHash = HashPassword(request.Password);
         var phoneHash = HashToken(normalizedPhone);
         var phoneLast4 = new string(normalizedPhone.Where(char.IsDigit).TakeLast(4).ToArray());
-
-        await using var transaction = await loyaltyDb.Database.BeginTransactionAsync(cancellationToken);
 
         var reserved = await loyaltyDb.Database.ExecuteSqlInterpolatedAsync($"""
             INSERT INTO "PhoneChangeAudit"
