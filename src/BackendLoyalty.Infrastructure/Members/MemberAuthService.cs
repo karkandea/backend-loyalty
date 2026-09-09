@@ -161,6 +161,22 @@ public sealed class MemberAuthService(
             """, cancellationToken);
 
         await loyaltyDb.Database.ExecuteSqlInterpolatedAsync($"""
+            UPDATE "MemberEmailVerification"
+            SET "usedAt" = {now}
+            WHERE "memberId" = {sessionIdentity.MemberId}
+              AND "businessId" = {sessionIdentity.BusinessId}
+              AND "usedAt" IS NULL
+            """, cancellationToken);
+
+        await loyaltyDb.Database.ExecuteSqlInterpolatedAsync($"""
+            UPDATE "MemberPasswordReset"
+            SET "usedAt" = {now}
+            WHERE "memberId" = {sessionIdentity.MemberId}
+              AND "businessId" = {sessionIdentity.BusinessId}
+              AND "usedAt" IS NULL
+            """, cancellationToken);
+
+        await loyaltyDb.Database.ExecuteSqlInterpolatedAsync($"""
             UPDATE "MemberSession"
             SET "revokedAt" = {now},
                 "updatedAt" = {now}
@@ -183,6 +199,11 @@ public sealed class MemberAuthService(
         var now = DateTime.UtcNow;
         var anonymizedEmail = $"deleted+{sessionIdentity.MemberId}@member.invalid";
         var replacementPasswordHash = HashPassword(CreateOpaqueToken());
+        var currentPhone = await loyaltyDb.Members.AsNoTracking()
+            .Where(x => x.Id == sessionIdentity.MemberId
+                        && x.BusinessId == sessionIdentity.BusinessId)
+            .Select(x => x.Phone)
+            .SingleOrDefaultAsync(cancellationToken);
 
         await using var transaction = await loyaltyDb.Database.BeginTransactionAsync(cancellationToken);
 
@@ -210,13 +231,24 @@ public sealed class MemberAuthService(
               AND "businessId" = {sessionIdentity.BusinessId}
             """, cancellationToken);
 
-        await loyaltyDb.Database.ExecuteSqlInterpolatedAsync($"""
-            UPDATE "PhoneChangeAudit"
-            SET "reason" = {"delete"}
-            WHERE "businessId" = {sessionIdentity.BusinessId}
-              AND "memberId" = {sessionIdentity.MemberId}
-              AND "reason" <> {"delete"}
-            """, cancellationToken);
+        if (!string.IsNullOrWhiteSpace(currentPhone))
+        {
+            var currentPhoneHash = HashToken(currentPhone);
+            var currentPhoneLast4 = new string(currentPhone.Where(char.IsDigit).TakeLast(4).ToArray());
+
+            await loyaltyDb.Database.ExecuteSqlInterpolatedAsync($"""
+                INSERT INTO "PhoneChangeAudit"
+                    ("id", "businessId", "memberId", "phoneHash", "phoneLast4", "reason", "createdAt")
+                VALUES
+                    ({Guid.NewGuid().ToString()}, {sessionIdentity.BusinessId}, {sessionIdentity.MemberId},
+                     {currentPhoneHash}, {currentPhoneLast4}, {"delete"}, {now})
+                ON CONFLICT ("businessId", "phoneHash")
+                DO UPDATE SET
+                    "memberId" = EXCLUDED."memberId",
+                    "phoneLast4" = EXCLUDED."phoneLast4",
+                    "reason" = EXCLUDED."reason"
+                """, cancellationToken);
+        }
 
         await loyaltyDb.Database.ExecuteSqlInterpolatedAsync($"""
             UPDATE "MemberCard"
