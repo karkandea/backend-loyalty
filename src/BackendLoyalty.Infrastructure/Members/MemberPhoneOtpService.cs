@@ -1435,10 +1435,10 @@ public sealed class MemberPhoneOtpService(
                          is_proxy, fingerprint_match, status, error_code, metadata)
                     VALUES
                         (@eventType, 'wa', @purpose, @businessId,
-                         CASE WHEN @memberId IS NULL THEN NULL ELSE CAST(@memberId AS uuid) END,
-                         CASE WHEN @otpSessionId IS NULL THEN NULL ELSE CAST(@otpSessionId AS uuid) END,
+                         CAST(@memberId AS uuid),
+                         CAST(@otpSessionId AS uuid),
                          @phoneHash,
-                         CASE WHEN @ip IS NULL OR @ip = '' THEN NULL ELSE CAST(@ip AS inet) END,
+                         CAST(NULLIF(@ip, '') AS inet),
                          @deviceId, @userAgent, false, NULL, @status, @errorCode, '{}'::jsonb)
                     """;
                 AddParameter(command, "@eventType", eventType);
