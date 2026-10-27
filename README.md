@@ -1,6 +1,21 @@
 # Backend Loyalty
 
-ASP.NET Core backend for the Loyalty Stamp platform.
+**ASP.NET Core 10 loyalty API** for stamp accrual, milestone rewards, and
+redeeming a reward once. The backend uses PostgreSQL and separates API,
+application contracts, domain entities, and infrastructure implementations.
+
+**Status:** Incremental migration from an existing Next.js implementation.
+The default-branch code is not presented as a completed production cutover.
+Read the [architecture, authentication, and redemption notes](docs/architecture.md).
+
+| Engineering area | Evidence |
+| --- | --- |
+| Layered solution | `BackendLoyalty.Api`, `.Application`, `.Domain`, `.Infrastructure` |
+| Authentication | Self-issued JWT for staff/business users; cookie-based member sessions |
+| Session safety | Persisted hashed refresh-session records, rotation and reuse handling |
+| Transaction safety | Conditional token/reward updates in a PostgreSQL transaction |
+| Migration | Password-hash adoption with explicit reset fallback |
+| Verification | [Backend CI](.github/workflows/backend-ci.yml), [source](src/), [runtime script](scripts/vps-verify.sh) |
 
 ## Migration strategy
 
@@ -11,6 +26,8 @@ Current backend scope:
 - ASP.NET Core on .NET 10 LTS
 - PostgreSQL via EF Core + Npgsql
 - standalone staff/business JWT auth issued by this backend
+- persisted refresh-session rotation and replay-family revocation in the
+  `AuthRefreshSession` store
 - direct `member_session` cookie validation for members
 - `POST /api/admin/auth/login`
 - `POST /api/business/auth/login`
@@ -41,9 +58,9 @@ src/
 
 ### Staff / manager / business users
 
-The .NET backend no longer requires Supabase URL, anon key, service-role key, OIDC discovery, JWKS, or Supabase JWT secrets.
+The .NET backend no longer requires Supabase URL, anon key, service-role key, OIDC discovery, JWKS, or Supabase JWT secrets for staff/business authentication.
 
-It issues its own HS256 access/refresh JWTs using a server-only signing key. Protected API routes accept only tokens carrying `token_type=access`; refresh tokens cannot be used as bearer access tokens.
+It issues its own HS256 access/refresh JWTs using a server-only signing key. Protected API routes accept only tokens carrying `token_type=access`; refresh tokens cannot be used as bearer access tokens. A hashed refresh-token session is persisted and rotated at refresh; reused rotated tokens can trigger family revocation. This requires the corresponding auth-session database schema.
 
 Required JWT configuration:
 
@@ -96,20 +113,26 @@ Credentialed CORS is enabled only for explicit origins so member cookies can wor
 
 ## Local build
 
+Requires the .NET 10 SDK. Build does not require a production database.
+
 ```bash
 dotnet restore BackendLoyalty.sln
-dotnet build BackendLoyalty.sln
+dotnet build BackendLoyalty.sln --configuration Release --no-restore
 ```
+
+The default branch has a GitHub Actions restore/build/Docker-build workflow,
+but **no dedicated automated test project** in the solution snapshot. Build
+success is not evidence of transactional correctness on live PostgreSQL.
 
 ## Docker / VPS verification
 
-The VPS does not need the .NET SDK installed on the host. From the repository root:
+The Docker host does not need a .NET SDK. Use only a disposable or explicitly
+approved test database; do not run this against the legacy production database.
+From the repository root:
 
 ```bash
-git checkout feat/bootstrap-dotnet-api
-git pull
 cp .env.example .env.vps
-# edit .env.vps with real PostgreSQL + JWT settings
+# edit .env.vps with isolated PostgreSQL + unique JWT settings
 bash scripts/vps-verify.sh
 ```
 
@@ -124,8 +147,25 @@ When PostgreSQL runs directly on the VPS host while the API runs in Docker, use 
 - Member redemption tokens are 5-minute tokens; issuing a new token expires previous ACTIVE tokens for that reward.
 - `AuditLog` remains best-effort because the legacy UUID audit columns do not perfectly match text IDs in the main schema.
 - .NET redemption conditionally claims token + reward in one transaction to prevent concurrent double redemption.
-- Standalone JWT refresh is currently stateless. Persistent refresh-session revocation/rotation should be added before broad production cutover.
+- Refresh sessions now have persistent hashed records and rotation logic.
+  Migration and concurrency behavior still need runtime verification against
+  the target PostgreSQL schema before cutover.
 
 ## Database safety
 
 Do not run EF migrations against the existing production database during parity testing. Schema changes needed for the final standalone auth/session model should be introduced explicitly after build/runtime parity is verified.
+
+## Important trade-offs and current limits
+
+- Two authentication models coexist to preserve member sessions during the
+  migration; authorization must remain explicit at every endpoint.
+- A conditional database update claims both the reward token and reward,
+  with a single transaction to avoid double redemption. See
+  [`RewardRedemptionService.cs`](src/BackendLoyalty.Infrastructure/Rewards/RewardRedemptionService.cs).
+- Member reward expiry and the legacy audit schema retain compatibility rules
+  noted above; these should be revisited before final cutover.
+- No validated production cutover, comprehensive automated test suite, or
+  current end-to-end transaction evidence is asserted here.
+
+Individual authorship is traceable through commit and pull-request history;
+this README does not claim sole implementation of every component.
