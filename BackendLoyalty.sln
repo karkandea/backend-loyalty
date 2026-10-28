@@ -10,6 +10,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BackendLoyalty.Domain", "sr
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BackendLoyalty.Infrastructure", "src\BackendLoyalty.Infrastructure\BackendLoyalty.Infrastructure.csproj", "{1B234A4D-452E-4EB3-8242-8436A0AEB16E}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BackendLoyalty.IntegrationTests", "tests\BackendLoyalty.IntegrationTests\BackendLoyalty.IntegrationTests.csproj", "{5E9C5D8D-8E9A-4DE3-93FB-E6CBE2D914E1}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -32,5 +34,9 @@ Global
 		{1B234A4D-452E-4EB3-8242-8436A0AEB16E}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{1B234A4D-452E-4EB3-8242-8436A0AEB16E}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{1B234A4D-452E-4EB3-8242-8436A0AEB16E}.Release|Any CPU.Build.0 = Release|Any CPU
+		{5E9C5D8D-8E9A-4DE3-93FB-E6CBE2D914E1}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{5E9C5D8D-8E9A-4DE3-93FB-E6CBE2D914E1}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{5E9C5D8D-8E9A-4DE3-93FB-E6CBE2D914E1}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{5E9C5D8D-8E9A-4DE3-93FB-E6CBE2D914E1}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal
